@@ -1,0 +1,97 @@
+{
+	"version": 3,
+	"routes": [
+		{
+			"src": ".*",
+			"continue": true,
+			"transforms": [
+				{
+					"type": "request.query",
+					"op": "delete",
+					"target": {
+						"key": "__pathname"
+					}
+				}
+			]
+		},
+		{
+			"src": "/_app/immutable/.+",
+			"headers": {
+				"cache-control": "public, immutable, max-age=31536000"
+			}
+		},
+		{
+			"handle": "filesystem"
+		},
+		{
+			"src": "/_app/immutable/.+",
+			"status": 404,
+			"continue": false
+		},
+		{
+			"src": "^/?(?:/__data.json)?$",
+			"dest": "/"
+		},
+		{
+			"src": "^/api/auth(/[^]*)?/?(?:/__data.json)?$",
+			"dest": "/api/auth/[...all]"
+		},
+		{
+			"src": "^/api/contacts/bulk-delete/?(?:/__data.json)?$",
+			"dest": "/api/contacts/bulk-delete"
+		},
+		{
+			"src": "^/api/contacts/([^/]+?)/?(?:/__data.json)?$",
+			"dest": "/api/contacts/[id]"
+		},
+		{
+			"src": "^/api/contacts/([^/]+?)/enrich-linkedin/?(?:/__data.json)?$",
+			"dest": "/api/contacts/[id]/enrich-linkedin"
+		},
+		{
+			"src": "^/api/contacts/([^/]+?)/generate-message/?(?:/__data.json)?$",
+			"dest": "/api/contacts/[id]/generate-message"
+		},
+		{
+			"src": "^/api/contacts/([^/]+?)/send/?(?:/__data.json)?$",
+			"dest": "/api/contacts/[id]/send"
+		},
+		{
+			"src": "^/api/contacts/([^/]+?)/update-status/?(?:/__data.json)?$",
+			"dest": "/api/contacts/[id]/update-status"
+		},
+		{
+			"src": "^/api/image-proxy/?(?:/__data.json)?$",
+			"dest": "/api/image-proxy"
+		},
+		{
+			"src": "^/api/lists/?(?:/__data.json)?$",
+			"dest": "/api/lists"
+		},
+		{
+			"src": "^/api/lists/([^/]+?)/?(?:/__data.json)?$",
+			"dest": "/api/lists/[id]"
+		},
+		{
+			"src": "^/api/lists/([^/]+?)/import/?(?:/__data.json)?$",
+			"dest": "/api/lists/[id]/import"
+		},
+		{
+			"src": "^/api/offers/([^/]+?)/scrape/?(?:/__data.json)?$",
+			"dest": "/api/offers/[id]/scrape"
+		},
+		{
+			"src": "^/lists/([^/]+?)/?(?:/__data.json)?$",
+			"dest": "/lists/[id]"
+		},
+		{
+			"src": "^/login/?(?:/__data.json)?$",
+			"dest": "/login"
+		},
+		{
+			"src": "/.*",
+			"dest": "/![-]/catchall"
+		}
+	],
+	"overrides": {}
+}

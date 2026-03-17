@@ -17,6 +17,7 @@
 	"devDependencies": {
 		"@lucide/svelte": "^0.515.0",
 		"@sveltejs/adapter-node": "^5.2.12",
+		"@sveltejs/adapter-vercel": "^6.3.3",
 		"@sveltejs/kit": "^2.22.0",
 		"@sveltejs/vite-plugin-svelte": "^6.0.0",
 		"@tailwindcss/oxide": "^4.1.11",
