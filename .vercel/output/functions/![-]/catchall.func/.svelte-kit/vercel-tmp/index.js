@@ -1,7 +1,10 @@
+import { installPolyfills } from '@sveltejs/kit/node/polyfills';
 import { createReadableStream } from '@sveltejs/kit/node';
 import { Server } from '../output/server/index.js';
 import { manifest } from './manifest.js';
 import process from 'node:process';
+
+installPolyfills();
 
 const server = new Server(manifest);
 
