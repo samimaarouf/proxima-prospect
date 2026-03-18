@@ -73,6 +73,9 @@
     </div>
     <div class="flex items-center gap-4">
       <span class="text-sm text-muted-foreground">{data.user?.email}</span>
+      <a href="/settings" class="text-sm text-muted-foreground hover:text-foreground transition-colors">
+        Paramètres
+      </a>
       <form method="POST" action="/api/auth/sign-out">
         <button type="submit" class="text-sm text-muted-foreground hover:text-foreground transition-colors">
           Déconnexion
