@@ -19,6 +19,7 @@ export interface UnipileSendEmailParams {
   body: string;
   cc?: UnipileRecipient[];
   replyTo?: string; // provider_id of email to reply to
+  attachments?: { blob: Blob; filename: string }[];
   trackingOptions?: {
     opens?: boolean;
     links?: boolean;
@@ -255,6 +256,12 @@ export class UnipileService {
         formData.append("tracking_options", JSON.stringify(params.trackingOptions));
       }
 
+      if (params.attachments?.length) {
+        for (const att of params.attachments) {
+          formData.append("attachments", att.blob, att.filename);
+        }
+      }
+
       const result = await this.requestFormData<{ id: string }>("/emails", formData);
       
       return {
@@ -382,6 +389,7 @@ export class UnipileService {
     attendeeIds: string[];
     text: string;
     title?: string; // For group chats
+    attachments?: { blob: Blob; filename: string }[];
   }): Promise<{ success: boolean; chatId?: string; messageId?: string; error?: string }> {
     try {
       const formData = new FormData();
@@ -394,6 +402,12 @@ export class UnipileService {
       
       if (params.title) {
         formData.append("title", params.title);
+      }
+
+      if (params.attachments?.length) {
+        for (const att of params.attachments) {
+          formData.append("attachments", att.blob, att.filename);
+        }
       }
 
       const result = await this.requestFormData<{ chat_id: string; message_id?: string }>(

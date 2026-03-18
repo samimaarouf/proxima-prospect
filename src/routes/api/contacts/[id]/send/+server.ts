@@ -10,10 +10,26 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     return json({ error: "Non authentifié" }, { status: 401 });
   }
 
-  const body = await request.json().catch(() => ({}));
-  const channel: "linkedin" | "whatsapp" | "email" = body.channel || "linkedin";
-  const customMessage: string | undefined = body.message;
-  const recipientOverride: string | undefined = body.recipient;
+  // Accept both JSON (no attachments) and multipart/form-data (with attachments)
+  const contentType = request.headers.get("content-type") || "";
+  let channel: "linkedin" | "whatsapp" | "email" = "linkedin";
+  let customMessage: string | undefined;
+  let recipientOverride: string | undefined;
+  let attachments: { blob: Blob; filename: string }[] = [];
+
+  if (contentType.includes("multipart/form-data")) {
+    const fd = await request.formData();
+    channel = (fd.get("channel") as "linkedin" | "whatsapp" | "email") || "linkedin";
+    customMessage = (fd.get("message") as string) || undefined;
+    recipientOverride = (fd.get("recipient") as string) || undefined;
+    const files = fd.getAll("attachments") as File[];
+    attachments = files.map((f) => ({ blob: f, filename: f.name }));
+  } else {
+    const body = await request.json().catch(() => ({}));
+    channel = body.channel || "linkedin";
+    customMessage = body.message;
+    recipientOverride = body.recipient;
+  }
 
   const contacts = await db
     .select()
@@ -122,6 +138,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
         accountId,
         attendeeIds: [formattedPhone],
         text: messageToSend,
+        attachments: attachments.length ? attachments : undefined,
       });
       if (!result.success) {
         return json({ error: result.error || "Erreur lors de l'envoi WhatsApp" }, { status: 500 });
@@ -151,6 +168,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
         to: [{ identifier: emailTo, display_name: contact.fullName || undefined }],
         subject,
         body: emailBody,
+        attachments: attachments.length ? attachments : undefined,
       });
       if (!result.success) {
         return json({ error: result.error || "Erreur lors de l'envoi de l'email" }, { status: 500 });

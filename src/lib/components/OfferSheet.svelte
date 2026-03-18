@@ -98,6 +98,9 @@
   let editingField = $state<{ contactId: string; field: string } | null>(null);
   let editingValue = $state("");
 
+  // Attachments per contact (only relevant for whatsapp/email)
+  let attachments = $state<Record<string, File[]>>({});
+
   // Recipient selection per contact (value = the actual phone/email string)
   let selectedRecipient = $state<Record<string, string>>({});
 
@@ -297,11 +300,25 @@
         const recipient = deliveryChannel !== "linkedin"
           ? (selectedRecipient[contact.id] ?? (opts.length === 1 ? opts[0] : undefined))
           : undefined;
-        const res = await fetch(`/api/contacts/${contact.id}/send`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channel: deliveryChannel, message: messages[contact.id], ...(recipient ? { recipient } : {}) }),
-        });
+
+        const contactFiles = attachments[contact.id] ?? [];
+        let fetchOpts: RequestInit;
+        if (contactFiles.length > 0) {
+          const fd = new FormData();
+          fd.append("channel", deliveryChannel);
+          fd.append("message", messages[contact.id]);
+          if (recipient) fd.append("recipient", recipient);
+          for (const f of contactFiles) fd.append("attachments", f);
+          fetchOpts = { method: "POST", body: fd };
+        } else {
+          fetchOpts = {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channel: deliveryChannel, message: messages[contact.id], ...(recipient ? { recipient } : {}) }),
+          };
+        }
+
+        const res = await fetch(`/api/contacts/${contact.id}/send`, fetchOpts);
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.error || "Erreur");
@@ -743,6 +760,50 @@
                     {/each}
                   </div>
                 {/if}
+              {/if}
+
+              <!-- Attachments (email & whatsapp only) -->
+              {#if deliveryChannel !== "linkedin"}
+                {@const contactFiles = attachments[contact.id] ?? []}
+                <div class="flex items-center gap-2 flex-wrap">
+                  <label
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs border border-input rounded-md hover:bg-accent transition-colors cursor-pointer text-muted-foreground"
+                    title="Ajouter une pièce jointe"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                    Joindre un fichier
+                    <input
+                      type="file"
+                      multiple
+                      class="hidden"
+                      onchange={(e) => {
+                        const files = Array.from((e.target as HTMLInputElement).files ?? []);
+                        attachments = { ...attachments, [contact.id]: [...(attachments[contact.id] ?? []), ...files] };
+                        (e.target as HTMLInputElement).value = "";
+                      }}
+                    />
+                  </label>
+                  {#each contactFiles as file, i}
+                    <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted text-foreground">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                      </svg>
+                      {file.name}
+                      <button
+                        type="button"
+                        onclick={() => {
+                          attachments = {
+                            ...attachments,
+                            [contact.id]: (attachments[contact.id] ?? []).filter((_, j) => j !== i),
+                          };
+                        }}
+                        class="ml-0.5 hover:text-destructive transition-colors"
+                      >×</button>
+                    </span>
+                  {/each}
+                </div>
               {/if}
 
               <div class="flex items-center justify-between">
