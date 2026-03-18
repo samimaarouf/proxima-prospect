@@ -372,8 +372,32 @@
     editingValue = "";
   }
 
+  function formatPhone(raw: string): string {
+    const s = raw.trim();
+    if (!s) return s;
+    const digits = s.replace(/\D/g, "");
+    if (!digits) return s;
+    // +33 X XX XX XX XX
+    if (digits.startsWith("33") && digits.length === 11) {
+      const d = digits.slice(2);
+      return `+33 ${d[0]} ${d.slice(1, 3)} ${d.slice(3, 5)} ${d.slice(5, 7)} ${d.slice(7, 9)}`;
+    }
+    // 0X XX XX XX XX
+    if (digits.startsWith("0") && digits.length === 10) {
+      return digits.replace(/(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/, "$1 $2 $3 $4 $5");
+    }
+    // Already international with + but no spaces → reformat
+    if (s.startsWith("+") && digits.length >= 10) {
+      const country = digits.slice(0, digits.length - 9);
+      const local = digits.slice(digits.length - 9);
+      return `+${country} ${local[0]} ${local.slice(1, 3)} ${local.slice(3, 5)} ${local.slice(5, 7)} ${local.slice(7, 9)}`;
+    }
+    return s;
+  }
+
   async function saveContactField(contact: Contact, field: string, value: string) {
-    const trimmed = value.trim();
+    const isPhone = field === "phone1" || field === "phone2";
+    const trimmed = isPhone ? formatPhone(value) : value.trim();
     editingField = null;
     editingValue = "";
     try {
