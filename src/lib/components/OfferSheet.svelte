@@ -535,12 +535,13 @@
               {#if contact.jobTitle}
                 <p class="text-xs text-muted-foreground truncate">{contact.jobTitle}</p>
               {/if}
-              <!-- Email & phones inline edit -->
+              <!-- Email, phones & LinkedIn inline edit -->
               <div class="flex items-center gap-2 flex-wrap mt-1">
                 {#each [
                   { field: "email", icon: "✉", value: contact.email, placeholder: "+ email" },
                   { field: "phone1", icon: "📞", value: contact.phone1, placeholder: "+ tél 1" },
                   { field: "phone2", icon: "📞", value: contact.phone2, placeholder: "+ tél 2" },
+                  { field: "linkedinUrl", icon: "🔗", value: contact.linkedinUrl, placeholder: "+ LinkedIn URL" },
                 ] as item}
                   {#if editingField?.contactId === contact.id && editingField.field === item.field}
                     <input
