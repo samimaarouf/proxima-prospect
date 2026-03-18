@@ -59,10 +59,40 @@
   let isSending = $state(false);
   let sendProgress = $state({ current: 0, total: 0, success: 0, failed: 0 });
 
+  // Inline field editing
+  let editingField = $state<{ contactId: string; field: string } | null>(null);
+  let editingValue = $state("");
+
+  // Recipient selection per contact (value = the actual phone/email string)
+  let selectedRecipient = $state<Record<string, string>>({});
+
   // Contacts that have a LinkedIn URL but haven't been enriched yet
   const unenrichedCount = $derived(
     contacts.filter((c) => c.linkedinUrl && !c.linkedinData).length
   );
+
+  // Returns the available recipient options for a contact given the current channel
+  function getRecipientOptions(contact: Contact): string[] {
+    if (deliveryChannel === "whatsapp") {
+      return [contact.phone1, contact.phone2].filter((v): v is string => !!v);
+    }
+    if (deliveryChannel === "email") {
+      return [contact.email].filter((v): v is string => !!v);
+    }
+    return [];
+  }
+
+  // Auto-select when there is exactly 1 option; clear when channel changes
+  $effect(() => {
+    // Re-run whenever deliveryChannel or contacts change
+    const _ch = deliveryChannel;
+    const newSelected: Record<string, string> = {};
+    for (const c of contacts) {
+      const opts = getRecipientOptions(c);
+      if (opts.length === 1) newSelected[c.id] = opts[0];
+    }
+    selectedRecipient = newSelected;
+  });
 
   const linkedinCharLimit = 300;
 
@@ -228,10 +258,14 @@
 
     for (const contact of toSend) {
       try {
+        const opts = getRecipientOptions(contact);
+        const recipient = deliveryChannel !== "linkedin"
+          ? (selectedRecipient[contact.id] ?? (opts.length === 1 ? opts[0] : undefined))
+          : undefined;
         const res = await fetch(`/api/contacts/${contact.id}/send`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channel: deliveryChannel, message: messages[contact.id] }),
+          body: JSON.stringify({ channel: deliveryChannel, message: messages[contact.id], ...(recipient ? { recipient } : {}) }),
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
@@ -260,8 +294,48 @@
     return new Promise((r) => setTimeout(r, ms));
   }
 
+  function focusOnMount(node: HTMLElement) {
+    node.focus();
+  }
+
+  function startEdit(contactId: string, field: string, current: string | null) {
+    editingField = { contactId, field };
+    editingValue = current ?? "";
+  }
+
+  function cancelEdit() {
+    editingField = null;
+    editingValue = "";
+  }
+
+  async function saveContactField(contact: Contact, field: string, value: string) {
+    const trimmed = value.trim();
+    editingField = null;
+    editingValue = "";
+    try {
+      const res = await fetch(`/api/contacts/${contact.id}/update-status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: trimmed || null }),
+      });
+      if (!res.ok) throw new Error();
+      const updated = await res.json();
+      onContactUpdated?.({ ...contact, ...updated });
+    } catch {
+      toast.error("Erreur lors de la sauvegarde");
+    }
+  }
+
+  // A contact is "ready to send" if it has a message AND a resolved recipient
   const contactsWithMessages = $derived(
-    contacts.filter((c) => messages[c.id] !== undefined && messages[c.id].trim() !== "")
+    contacts.filter((c) => {
+      if (!messages[c.id]?.trim()) return false;
+      if (deliveryChannel === "linkedin") return true;
+      const opts = getRecipientOptions(c);
+      if (opts.length === 0) return false;
+      if (opts.length === 1) return true; // auto-selected
+      return !!selectedRecipient[c.id]; // requires explicit selection
+    })
   );
 </script>
 
@@ -447,6 +521,39 @@
               {#if contact.jobTitle}
                 <p class="text-xs text-muted-foreground truncate">{contact.jobTitle}</p>
               {/if}
+              <!-- Email & phones inline edit -->
+              <div class="flex items-center gap-2 flex-wrap mt-1">
+                {#each [
+                  { field: "email", icon: "✉", value: contact.email, placeholder: "+ email" },
+                  { field: "phone1", icon: "📞", value: contact.phone1, placeholder: "+ tél 1" },
+                  { field: "phone2", icon: "📞", value: contact.phone2, placeholder: "+ tél 2" },
+                ] as item}
+                  {#if editingField?.contactId === contact.id && editingField.field === item.field}
+                    <input
+                      type="text"
+                      class="text-xs border border-indigo-400 rounded px-1.5 py-0.5 w-36 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-background"
+                      value={editingValue}
+                      oninput={(e) => (editingValue = (e.target as HTMLInputElement).value)}
+                      onblur={() => saveContactField(contact, item.field, editingValue)}
+                      onkeydown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); saveContactField(contact, item.field, editingValue); }
+                        if (e.key === "Escape") cancelEdit();
+                      }}
+                      use:focusOnMount
+                    />
+                  {:else}
+                    <button
+                      type="button"
+                      onclick={() => startEdit(contact.id, item.field, item.value)}
+                      class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded hover:bg-accent transition-colors {item.value ? 'text-muted-foreground' : 'text-muted-foreground/50 italic'}"
+                      title="Modifier"
+                    >
+                      <span>{item.icon}</span>
+                      <span>{item.value ?? item.placeholder}</span>
+                    </button>
+                  {/if}
+                {/each}
+              </div>
             </div>
 
             <!-- Action buttons -->
@@ -505,6 +612,29 @@
                 class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
                 placeholder="Le message apparaîtra ici…"
               ></textarea>
+
+              <!-- Recipient selector (whatsapp/email, only if ≥2 options) -->
+              {#if deliveryChannel !== "linkedin"}
+                {@const opts = getRecipientOptions(contact)}
+                {#if opts.length === 0}
+                  <p class="text-xs text-amber-600 italic">Aucun {deliveryChannel === "whatsapp" ? "numéro" : "email"} renseigné</p>
+                {:else if opts.length >= 2}
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-xs text-muted-foreground">Envoyer à :</span>
+                    {#each opts as opt}
+                      <button
+                        type="button"
+                        onclick={() => (selectedRecipient = { ...selectedRecipient, [contact.id]: opt })}
+                        class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition-colors {selectedRecipient[contact.id] === opt ? 'border-indigo-500 bg-indigo-50 text-indigo-700 font-medium' : 'border-input text-muted-foreground hover:bg-accent'}"
+                      >
+                        <span class="w-2 h-2 rounded-full flex-shrink-0 {selectedRecipient[contact.id] === opt ? 'bg-indigo-500' : 'bg-muted-foreground/30'}"></span>
+                        {opt}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              {/if}
+
               <div class="flex items-center justify-between">
                 {#if deliveryChannel === "linkedin"}
                   <span class="text-xs {msg.length > linkedinCharLimit ? 'text-red-600 font-medium' : 'text-muted-foreground'}">

@@ -11,18 +11,12 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 
   const body = await request.json().catch(() => ({}));
 
-  const allowed = ["contactStatus", "aiMessage", "notes", "nextStep", "lastAction"];
+  const allowed = ["contactStatus", "aiMessage", "notes", "nextStep", "lastAction", "email", "phone1", "phone2"];
   const updateData: Record<string, unknown> = { updatedAt: new Date() };
 
   for (const key of allowed) {
     if (key in body) {
-      updateData[
-        key === "contactStatus" ? "contactStatus" :
-        key === "aiMessage" ? "aiMessage" :
-        key === "notes" ? "notes" :
-        key === "nextStep" ? "nextStep" :
-        "lastAction"
-      ] = body[key];
+      updateData[key] = body[key];
     }
   }
 
