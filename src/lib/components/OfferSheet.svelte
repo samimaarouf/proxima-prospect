@@ -50,6 +50,16 @@
     isLinkedInEnabled?: boolean;
   } = $props();
 
+  type HistoryEntry = {
+    id: string;
+    channel: string;
+    recipient: string | null;
+    message: string;
+    offerTitle: string | null;
+    companyName: string | null;
+    sentAt: string;
+  };
+
   let deliveryChannel = $state<"linkedin" | "whatsapp" | "email">("linkedin");
   let messages = $state<Record<string, string>>({});
   let generatingFor = $state<string | null>(null);
@@ -60,6 +70,29 @@
   let enrichingAll = $state(false);
   let isSending = $state(false);
   let sendProgress = $state({ current: 0, total: 0, success: 0, failed: 0 });
+
+  // Message history per linkedin URL
+  let history = $state<Record<string, HistoryEntry[]>>({});
+  let historyOpen = $state<Record<string, boolean>>({});
+  let historyLoaded = $state(false);
+
+  $effect(() => {
+    const urls = contacts.map((c) => c.linkedinUrl).filter(Boolean) as string[];
+    if (!urls.length) { historyLoaded = true; return; }
+    fetch(`/api/message-history?linkedinUrls=${encodeURIComponent(urls.join(","))}`)
+      .then((r) => r.json())
+      .then((rows: HistoryEntry[] & { linkedinUrl?: string }[]) => {
+        const byUrl: Record<string, HistoryEntry[]> = {};
+        for (const row of rows) {
+          const k = (row as HistoryEntry & { linkedinUrl?: string }).linkedinUrl || "";
+          if (!byUrl[k]) byUrl[k] = [];
+          byUrl[k].push(row);
+        }
+        history = byUrl;
+      })
+      .catch(() => {})
+      .finally(() => { historyLoaded = true; });
+  });
 
   // Inline field editing
   let editingField = $state<{ contactId: string; field: string } | null>(null);
@@ -627,6 +660,56 @@
               </button>
             </div>
           </div>
+
+          <!-- Message history (per LinkedIn URL) -->
+          {#if contact.linkedinUrl && historyLoaded}
+            {@const entries = history[contact.linkedinUrl] ?? []}
+            {#if entries.length > 0}
+              <div class="border-t border-border px-4 pt-2 pb-1">
+                <button
+                  type="button"
+                  onclick={() => (historyOpen = { ...historyOpen, [contact.id]: !historyOpen[contact.id] })}
+                  class="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors w-full py-1"
+                >
+                  <svg
+                    width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round"
+                    class="transition-transform {historyOpen[contact.id] ? 'rotate-90' : ''}"
+                  >
+                    <polyline points="9 18 15 12 9 6"/>
+                  </svg>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                  {entries.length} message{entries.length > 1 ? "s" : ""} envoyé{entries.length > 1 ? "s" : ""}
+                </button>
+                {#if historyOpen[contact.id]}
+                  <div class="space-y-2 pb-2 mt-1">
+                    {#each entries as entry}
+                      {@const channelIcon = entry.channel === "linkedin" ? "💼" : entry.channel === "whatsapp" ? "💬" : "✉"}
+                      {@const date = new Date(entry.sentAt).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      <div class="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-1">
+                        <div class="flex items-center justify-between gap-2">
+                          <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <span>{channelIcon}</span>
+                            <span class="font-medium capitalize">{entry.channel}</span>
+                            {#if entry.recipient}
+                              <span class="text-muted-foreground/60">→ {entry.recipient}</span>
+                            {/if}
+                            {#if entry.offerTitle}
+                              <span class="text-muted-foreground/60">· {entry.offerTitle}</span>
+                            {/if}
+                          </div>
+                          <span class="text-xs text-muted-foreground/60 shrink-0">{date}</span>
+                        </div>
+                        <p class="text-xs text-foreground/80 line-clamp-3 whitespace-pre-line">{entry.message}</p>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          {/if}
 
           <!-- Message zone -->
           <div class="px-4 py-3 space-y-2">

@@ -129,6 +129,22 @@ export const prospectContact = pgTable("prospect_contact", {
   offerIdIdx: index("prospect_contact_offer_id_idx").on(table.offerId),
 }));
 
+export const messageHistory = pgTable("prospect_message_history", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  linkedinUrl: text("linkedin_url"),
+  contactName: text("contact_name"),
+  offerTitle: text("offer_title"),
+  companyName: text("company_name"),
+  channel: text("channel").notNull(),
+  recipient: text("recipient"),
+  message: text("message").notNull(),
+  sentAt: timestamp("sent_at").defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index("message_history_user_id_idx").on(table.userId),
+  linkedinUrlIdx: index("message_history_linkedin_url_idx").on(table.linkedinUrl),
+}));
+
 // ===========================
 // Relations
 // ===========================

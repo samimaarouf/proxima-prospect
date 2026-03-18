@@ -1,6 +1,6 @@
 import { json } from "@sveltejs/kit";
 import { db } from "$lib/server/db";
-import { prospectContact, user } from "$lib/server/db/schema";
+import { prospectContact, prospectOffer, user, messageHistory } from "$lib/server/db/schema";
 import { eq } from "drizzle-orm";
 import { UnipileService } from "$lib/services/UnipileService";
 import type { RequestHandler } from "./$types";
@@ -13,6 +13,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const body = await request.json().catch(() => ({}));
   const channel: "linkedin" | "whatsapp" | "email" = body.channel || "linkedin";
   const customMessage: string | undefined = body.message;
+  const recipientOverride: string | undefined = body.recipient;
 
   const contacts = await db
     .select()
@@ -47,7 +48,16 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     return json({ error: "Profil utilisateur introuvable" }, { status: 404 });
   }
 
+  // Fetch offer info for history context
+  const offerRows = await db
+    .select({ offerTitle: prospectOffer.offerTitle, companyName: prospectOffer.companyName })
+    .from(prospectOffer)
+    .where(eq(prospectOffer.id, contact.offerId))
+    .limit(1);
+  const offer = offerRows[0];
+
   const unipile = new UnipileService();
+  let resolvedRecipient: string | undefined = recipientOverride;
 
   try {
     if (channel === "linkedin") {
@@ -100,10 +110,11 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       if (!accountId) {
         return json({ error: "Compte WhatsApp non connecté. Configurez-le dans proxima-v3." }, { status: 400 });
       }
-      const phone = contact.phone1 || contact.phone2;
+      const phone = resolvedRecipient || contact.phone1 || contact.phone2;
       if (!phone) {
         return json({ error: "Pas de numéro de téléphone pour ce contact" }, { status: 400 });
       }
+      resolvedRecipient = phone;
 
       // Format phone number for WhatsApp
       const formattedPhone = formatPhoneForWhatsApp(phone);
@@ -120,9 +131,11 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       if (!accountId) {
         return json({ error: "Compte email non connecté. Configurez-le dans proxima-v3." }, { status: 400 });
       }
-      if (!contact.email) {
+      const emailTo = resolvedRecipient || contact.email;
+      if (!emailTo) {
         return json({ error: "Pas d'email pour ce contact" }, { status: 400 });
       }
+      resolvedRecipient = emailTo;
 
       // Parse subject from message if present (format: "Objet: ...")
       let subject = `Proposition de partenariat — ${contact.fullName || ""}`.trim();
@@ -135,7 +148,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
       const result = await unipile.sendEmail({
         accountId,
-        to: [{ identifier: contact.email, display_name: contact.fullName || undefined }],
+        to: [{ identifier: emailTo, display_name: contact.fullName || undefined }],
         subject,
         body: emailBody,
       });
@@ -143,6 +156,18 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
         return json({ error: result.error || "Erreur lors de l'envoi de l'email" }, { status: 500 });
       }
     }
+
+    // Save to message history
+    await db.insert(messageHistory).values({
+      userId: locals.user.id,
+      linkedinUrl: contact.linkedinUrl || null,
+      contactName: contact.fullName || null,
+      offerTitle: offer?.offerTitle || null,
+      companyName: offer?.companyName || null,
+      channel,
+      recipient: resolvedRecipient || null,
+      message: messageToSend,
+    });
 
     // Update contact status to track which channel was used
     const [updated] = await db
