@@ -375,6 +375,17 @@
     updateContact(updated);
   }
 
+  function handleContactDeleted(contactId: string) {
+    const offerId = contacts.find((c) => c.id === contactId)?.offerId;
+    contacts = contacts.filter((c) => c.id !== contactId);
+    if (offerId) {
+      contactsByOffer = {
+        ...contactsByOffer,
+        [offerId]: (contactsByOffer[offerId] || []).filter((c) => c.id !== contactId),
+      };
+    }
+  }
+
   function handleFileInput(e: Event) {
     importFile = (e.target as HTMLInputElement).files?.[0] || null;
   }
@@ -501,6 +512,7 @@
     contacts={selectedOfferContacts as any}
     onClose={() => (showOfferSheet = false)}
     onContactUpdated={handleContactUpdated}
+    onContactDeleted={handleContactDeleted}
     onOfferScraped={(updated) => { updateOffer(updated); selectedOfferForSheet = { ...selectedOfferForSheet!, ...updated }; }}
     {isLinkedInEnabled}
   />

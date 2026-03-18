@@ -35,6 +35,7 @@
     contacts,
     onClose,
     onContactUpdated,
+    onContactDeleted,
     onOfferScraped,
     isLinkedInEnabled = false,
   }: {
@@ -43,6 +44,7 @@
     onClose: () => void;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onContactUpdated?: (updated: any) => void;
+    onContactDeleted?: (contactId: string) => void;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onOfferScraped?: (updated: any) => void;
     isLinkedInEnabled?: boolean;
@@ -287,6 +289,18 @@
       toast.success(`${sendProgress.success} message${sendProgress.success > 1 ? "s" : ""} envoyé${sendProgress.success > 1 ? "s" : ""} !`);
     } else {
       toast.warning(`${sendProgress.success} envoyé${sendProgress.success > 1 ? "s" : ""}, ${sendProgress.failed} échoué${sendProgress.failed > 1 ? "s" : ""}`);
+    }
+  }
+
+  async function deleteContact(contact: Contact) {
+    if (!confirm(`Supprimer ${contact.fullName || "ce contact"} ?`)) return;
+    try {
+      const res = await fetch(`/api/contacts/${contact.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      onContactDeleted?.(contact.id);
+      toast.success("Contact supprimé");
+    } catch {
+      toast.error("Erreur lors de la suppression");
     }
   }
 
@@ -558,6 +572,18 @@
 
             <!-- Action buttons -->
             <div class="flex items-center gap-1.5 flex-shrink-0">
+              <button
+                onclick={() => deleteContact(contact)}
+                class="p-1.5 rounded hover:bg-red-50 hover:text-red-500 text-muted-foreground/40 transition-colors"
+                title="Supprimer ce contact"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6l-1 14H6L5 6"/>
+                  <path d="M10 11v6"/><path d="M14 11v6"/>
+                  <path d="M9 6V4h6v2"/>
+                </svg>
+              </button>
               {#if contact.linkedinUrl}
                 <a
                   href={contact.linkedinUrl}
