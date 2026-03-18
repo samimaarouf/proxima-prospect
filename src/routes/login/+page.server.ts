@@ -31,7 +31,10 @@ export const actions: Actions = {
 
       throw redirect(302, "/");
     } catch (err) {
-      if (err instanceof Response || (err as { status?: number })?.status === 302) {
+      const isRedirect = (err as { status?: number })?.status === 302;
+      const isResponse = err instanceof Response;
+
+      if (isResponse || isRedirect) {
         throw err;
       }
       return fail(400, { error: "Connexion impossible. Vérifiez vos identifiants." });
