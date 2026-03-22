@@ -81,7 +81,7 @@
           P
         </div>
         <div>
-          <h1 class="text-lg font-semibold">Proxima Prospect</h1>
+          <h1 class="text-lg font-semibold">Proxima Entreprise</h1>
           <p class="text-xs text-muted-foreground">Paramètres</p>
         </div>
       </a>

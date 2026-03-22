@@ -67,8 +67,8 @@
         P
       </div>
       <div>
-        <h1 class="text-lg font-semibold">Proxima Prospect</h1>
-        <p class="text-xs text-muted-foreground">Gestion des prospections</p>
+      <h1 class="text-lg font-semibold">Proxima Entreprise</h1>
+          <p class="text-xs text-muted-foreground">Gestion des prospections</p>
       </div>
     </div>
     <div class="flex items-center gap-4">

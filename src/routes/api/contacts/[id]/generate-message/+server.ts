@@ -13,6 +13,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
   const body = await request.json().catch(() => ({}));
   const channel: "linkedin" | "whatsapp" | "email" = body.channel || "linkedin";
+  const extraInstructions: string = body.extraInstructions?.trim() || "";
 
   const contacts = await db
     .select()
@@ -90,7 +91,7 @@ Rédige UNIQUEMENT le message, sans introduction, sans guillemets, sans explicat
 1. Montrer que tu as étudié leur profil/entreprise (personnalisation)
 2. Expliquer que tu as vu leur offre de poste et que tu es expert pour les aider à trouver le bon candidat
 3. Proposer un échange court (15 min)
-4. Se terminer par le prénom du recruteur`;
+4. Se terminer par le prénom du recruteur${extraInstructions ? `\n\nInstructions supplémentaires du recruteur :\n${extraInstructions}` : ""}`;
 
   try {
     const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });

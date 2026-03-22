@@ -101,6 +101,13 @@
   // Attachments per contact (only relevant for whatsapp/email)
   let attachments = $state<Record<string, File[]>>({});
 
+  // Email subjects per contact (extracted from "Objet: ..." in the message)
+  let subjects = $state<Record<string, string>>({});
+
+  // Extra generation instructions per contact
+  let customPrompts = $state<Record<string, string>>({});
+  let promptOpen = $state<Record<string, boolean>>({});
+
   // Recipient selection per contact (value = the actual phone/email string)
   let selectedRecipient = $state<Record<string, string>>({});
 
@@ -108,6 +115,16 @@
   const unenrichedCount = $derived(
     contacts.filter((c) => c.linkedinUrl && !c.linkedinData).length
   );
+
+  function extractSubjectFromMessage(msg: string): { subject: string; body: string } {
+    const match = msg.match(/^Objet\s*:\s*(.+)$/im);
+    if (match) {
+      const subject = match[1].trim();
+      const body = msg.replace(/^Objet\s*:\s*.+\n?/im, "").trim();
+      return { subject, body };
+    }
+    return { subject: "", body: msg };
+  }
 
   // Returns the available recipient options for a contact given the current channel
   function getRecipientOptions(contact: Contact): string[] {
@@ -134,13 +151,19 @@
 
   const linkedinCharLimit = 300;
 
-  // Initialize messages from existing aiMessage
+  // Initialize messages from existing aiMessage (extract subject for email)
   $effect(() => {
-    const init: Record<string, string> = {};
+    const initMsg: Record<string, string> = {};
+    const initSubj: Record<string, string> = {};
     for (const c of contacts) {
-      if (c.aiMessage) init[c.id] = c.aiMessage;
+      if (c.aiMessage) {
+        const { subject, body } = extractSubjectFromMessage(c.aiMessage);
+        initMsg[c.id] = subject ? body : c.aiMessage;
+        if (subject) initSubj[c.id] = subject;
+      }
     }
-    messages = init;
+    messages = initMsg;
+    subjects = initSubj;
   });
 
   function getProfilePicture(contact: Contact): string | null {
@@ -173,11 +196,21 @@
       const res = await fetch(`/api/contacts/${contactId}/generate-message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: deliveryChannel }),
+        body: JSON.stringify({
+          channel: deliveryChannel,
+          extraInstructions: customPrompts[contactId] || "",
+        }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Erreur");
       const updated = await res.json();
-      messages = { ...messages, [contactId]: updated.aiMessage || "" };
+      const raw = updated.aiMessage || "";
+      if (deliveryChannel === "email") {
+        const { subject, body } = extractSubjectFromMessage(raw);
+        if (subject) subjects = { ...subjects, [contactId]: subject };
+        messages = { ...messages, [contactId]: body };
+      } else {
+        messages = { ...messages, [contactId]: raw };
+      }
       onContactUpdated?.({ ...contacts.find((c) => c.id === contactId)!, ...updated });
       toast.success("Message généré");
     } catch (e) {
@@ -196,11 +229,21 @@
         const res = await fetch(`/api/contacts/${contact.id}/generate-message`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channel: deliveryChannel }),
+          body: JSON.stringify({
+            channel: deliveryChannel,
+            extraInstructions: customPrompts[contact.id] || "",
+          }),
         });
         if (res.ok) {
           const updated = await res.json();
-          messages = { ...messages, [contact.id]: updated.aiMessage || "" };
+          const raw = updated.aiMessage || "";
+          if (deliveryChannel === "email") {
+            const { subject, body } = extractSubjectFromMessage(raw);
+            if (subject) subjects = { ...subjects, [contact.id]: subject };
+            messages = { ...messages, [contact.id]: body };
+          } else {
+            messages = { ...messages, [contact.id]: raw };
+          }
           onContactUpdated?.({ ...contact, ...updated });
           count++;
         }
@@ -301,12 +344,17 @@
           ? (selectedRecipient[contact.id] ?? (opts.length === 1 ? opts[0] : undefined))
           : undefined;
 
+        // Rebuild full message (prepend subject for email)
+        const bodyText = messages[contact.id];
+        const subject = deliveryChannel === "email" ? (subjects[contact.id] || "").trim() : "";
+        const fullMessage = subject ? `Objet: ${subject}\n\n${bodyText}` : bodyText;
+
         const contactFiles = attachments[contact.id] ?? [];
         let fetchOpts: RequestInit;
         if (contactFiles.length > 0) {
           const fd = new FormData();
           fd.append("channel", deliveryChannel);
-          fd.append("message", messages[contact.id]);
+          fd.append("message", fullMessage);
           if (recipient) fd.append("recipient", recipient);
           for (const f of contactFiles) fd.append("attachments", f);
           fetchOpts = { method: "POST", body: fd };
@@ -314,7 +362,7 @@
           fetchOpts = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: deliveryChannel, message: messages[contact.id], ...(recipient ? { recipient } : {}) }),
+            body: JSON.stringify({ channel: deliveryChannel, message: fullMessage, ...(recipient ? { recipient } : {}) }),
           };
         }
 
@@ -754,7 +802,48 @@
 
           <!-- Message zone -->
           <div class="px-4 py-3 space-y-2">
+            <!-- Extra prompt instructions (collapsible) -->
+            <div>
+              <button
+                type="button"
+                onclick={() => (promptOpen = { ...promptOpen, [contact.id]: !promptOpen[contact.id] })}
+                class="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <svg
+                  width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round"
+                  class="transition-transform {promptOpen[contact.id] ? 'rotate-90' : ''}"
+                >
+                  <polyline points="9 18 15 12 9 6"/>
+                </svg>
+                Instructions pour la génération
+                {#if customPrompts[contact.id]}
+                  <span class="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                {/if}
+              </button>
+              {#if promptOpen[contact.id]}
+                <textarea
+                  rows={2}
+                  value={customPrompts[contact.id] ?? ""}
+                  oninput={(e) => (customPrompts = { ...customPrompts, [contact.id]: (e.target as HTMLTextAreaElement).value })}
+                  placeholder="Ex: Mets l'accent sur son expérience en SaaS, sois plus direct, utilise le tutoiement…"
+                  class="mt-1.5 w-full rounded-md border border-indigo-200 bg-indigo-50/50 px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none placeholder:text-muted-foreground/60"
+                ></textarea>
+              {/if}
+            </div>
+
             {#if msg !== undefined}
+              <!-- Subject field (email only) -->
+              {#if deliveryChannel === "email"}
+                <input
+                  type="text"
+                  value={subjects[contact.id] ?? ""}
+                  oninput={(e) => (subjects = { ...subjects, [contact.id]: (e.target as HTMLInputElement).value })}
+                  placeholder="Objet de l'email…"
+                  class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring font-medium"
+                />
+              {/if}
+
               <textarea
                 value={msg}
                 oninput={(e) => { messages = { ...messages, [contact.id]: (e.target as HTMLTextAreaElement).value }; }}
