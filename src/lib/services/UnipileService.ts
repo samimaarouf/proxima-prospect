@@ -496,8 +496,11 @@ export class UnipileService {
       providers: params.providers,
       success_redirect_url: params.successRedirectUrl,
       failure_redirect_url: params.failureRedirectUrl,
-      expiresOn: params.expiresOn,
     };
+
+    if (params.expiresOn) {
+      body.expiresOn = params.expiresOn;
+    }
     
     if (params.notifyUrl) {
       body.notify_url = params.notifyUrl;

@@ -23,11 +23,18 @@ export const POST: RequestHandler = async ({ locals, request, url }) => {
 
   const unipile = getUnipileService();
 
-  const { url: authUrl } = await unipile.generateHostedAuthLink({
-    providers,
-    successRedirectUrl,
-    failureRedirectUrl,
-  });
+  try {
+    const { url: authUrl } = await unipile.generateHostedAuthLink({
+      providers,
+      successRedirectUrl,
+      failureRedirectUrl,
+      name: locals.user.id,
+      expiresOn: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // 10 minutes
+    });
 
-  return json({ url: authUrl });
+    return json({ url: authUrl });
+  } catch (err) {
+    console.error("[connect-unipile] Error:", err);
+    throw error(500, err instanceof Error ? err.message : "Erreur Unipile");
+  }
 };
