@@ -69,50 +69,39 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     email: "Email professionnel. Inclus un objet percutant sur la première ligne (format 'Objet: ...'). Corps COURT : 5-7 lignes maximum.",
   };
 
-  const systemPrompt = `Tu es un chasseur de têtes spécialisé en recrutement commercial (Sales).
-Tu rédiges des messages de prospection courts et directs pour ${recruiterName} de ${recruiterCompany} (site : https://proxima-agents.com/).
+  const systemPrompt = `Rôle : Tu es un Talent Acquisition Manager spécialisé dans la chasse de profils Sales à haut niveau. Tu rédiges des messages de prospection pour ${recruiterName} de ${recruiterCompany} (https://proxima-agents.com/).
 
-Contexte de l'offre :
-- Entreprise : ${offer.companyName}
-- Poste : ${offer.offerTitle || "non précisé"}
-${offer.offerContent ? `- Description : ${offer.offerContent.substring(0, 800)}` : ""}
+Contexte :
+- Contact : ${contactName}${contactJobTitle ? `, ${contactJobTitle}` : ""} chez ${offer.companyName}
+- Offre : ${offer.offerTitle || "poste non précisé"}
+${offer.offerContent ? `- Détail de l'offre : ${offer.offerContent.substring(0, 800)}` : ""}
+${linkedinSummary ? `- Profil LinkedIn du contact : ${linkedinSummary}` : ""}
+${pitch ? `- Pitch recruteur : ${pitch}` : ""}
 
-Contact :
-- Nom : ${contactName}
-${contactJobTitle ? `- Titre : ${contactJobTitle}` : ""}
-${linkedinSummary ? `- Résumé LinkedIn : ${linkedinSummary}` : ""}
+Paramètres de ciblage à déduire intelligemment de l'offre :
+- Profil type : expérience en années et type de vente précis (ex: 3-5 ans en vente B2B complexe)
+- Secteur d'origine : secteur exact où chercher ces profils (ex: Climate Tech, SaaS RH, Fintech)
+- Entreprises cibles : 3-4 vraies entreprises du même secteur/taille où ces profils Sales existent et où il faudrait sourcer
 
-Pitch recruteur :
-${pitch || `${recruiterName} — recrutement spécialisé profils Sales, chez ${recruiterCompany}.`}
+Ma proposition de valeur (à intégrer dans le message) :
+- Spécialisation : recrutement exclusif de profils Sales (BizDev, Account Executive, Head of Sales)
+- Méthode : outil de ciblage métier ultra-fin pour extraire les profils passés par ces entreprises cibles
+- Vitesse : première sélection qualifiée sous 72h
+- Modèle : zéro risque, pas d'abonnement, tarif au prix d'une cooptation interne, paiement uniquement si recrutement effectif
 
 Canal : ${channelInstructions[channel] || channelInstructions.linkedin}
 
-Structure OBLIGATOIRE (email/whatsapp) — respecte scrupuleusement cet ordre et ce ton :
+Structure du message (email/whatsapp) :
+1. Accroche : référence directe à leur offre de [poste] chez [entreprise]
+2. Preuve de compréhension : citer les entreprises cibles où sourcer, avec le profil type recherché
+3. Solution : vitesse (72h) et précision de la méthode
+4. Offre financière : zéro risque, paiement au recrutement uniquement, tarif cooptation
+5. Appel à l'action : échange de 10 minutes cette semaine
+6. Signature : ${recruiterName} + lien en HTML : <a href="https://proxima-agents.com/">proxima-agents.com</a>
 
-"Bonjour [Prénom],
+Ton : sobre, expert, partenaire de confiance. Pas de jargon "IA" ou "révolutionnaire". Court et percutant.${extraInstructions ? `\n\nInstructions supplémentaires (prioritaires) :\n${extraInstructions}` : ""}
 
-J'ai vu votre recherche pour un [Intitulé du poste]. Spécialisé exclusivement sur les profils Sales, j'accompagne [type d'entreprise déduit de l'offre] pour identifier des talents capables de [mission/compétence clé déduite de l'offre].
-
-Grâce à notre outil de ciblage personnalisé, je peux vous présenter sous 3 jours des profils ayant déjà l'expérience sectorielle requise (type [2-3 entreprises similaires pertinentes]).
-
-Mon approche est simple :
-
-Zéro risque : Vous ne payez que si vous recrutez le candidat proposé.
-Coût maîtrisé : Un tarif fixe aligné sur celui d'une cooptation interne.
-
-Seriez-vous ouvert à un échange de 10 minutes cette semaine ?
-
-Bien à vous,
-[Prénom du recruteur]"
-
-En bas du message, ajoute discrètement le lien en HTML : <a href="https://proxima-agents.com/">proxima-agents.com</a>
-
-RÈGLES STRICTES :
-- Respecte exactement cette structure, dans cet ordre
-- Les éléments entre crochets sont à personnaliser à partir du contenu de l'offre
-- "Zéro risque" et "Coût maîtrisé" sont des libellés fixes, ne pas les modifier
-- Spécialisation TOUJOURS "profils Sales" — jamais le secteur de l'entreprise cible
-- Ne jamais inventer des informations absentes de l'offre${extraInstructions ? `\n\nInstructions supplémentaires (prioritaires) :\n${extraInstructions}` : ""}`;
+Rédige UNIQUEMENT le message final, sans introduction ni commentaire.`;
 
   try {
     const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
@@ -123,7 +112,7 @@ RÈGLES STRICTES :
         { role: "system", content: systemPrompt },
         { role: "user", content: "Génère le message de prospection." },
       ],
-      max_tokens: channel === "email" ? 350 : 200,
+      max_tokens: channel === "email" ? 450 : 220,
       temperature: 0.8,
     });
 
