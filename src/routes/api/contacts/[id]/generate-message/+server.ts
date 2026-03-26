@@ -63,56 +63,56 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const contactJobTitle = contact.jobTitle || "";
   const linkedinSummary = contact.linkedinSummary || "";
 
-  const emailExample = `Bonjour [Prénom],
-
-J'ai pris connaissance de votre offre pour un [Intitulé du poste] chez [Entreprise]. Pour [mission clé du poste], je sais que le défi est de trouver un profil capable de [compétence critique liée au poste].
-
-Spécialisé exclusivement sur les profils Sales, j'utilise un outil de sourcing par IA qui me permet de définir des critères métier très fins pour identifier ces talents sur l'ensemble des réseaux. Cela me permet de vous soumettre une première sélection qualifiée sous 3 jours.
-
-Mon approche est pensée pour être une aide directe à votre croissance, sans aucun risque :
-
-Facturation uniquement au succès : Vous ne payez qu'au recrutement effectif, pas avant.
-Tarif transparent : Un prix fixe aligné sur celui d'une cooptation interne (pas d'abonnement, pas de frais de dossier).
-Zéro risque financier : Si vous n'embauchez pas, vous ne nous devez rien.
-
-Seriez-vous ouvert à un échange de 10 minutes cette semaine pour que je vous montre la pertinence des profils identifiés pour ce poste ?
-
-Bien à vous,
-${recruiterName}`;
-
   const channelInstructions: Record<string, string> = {
-    linkedin: "LinkedIn (connexion ou message direct). MAXIMUM 300 caractères. Résume l'essentiel : qui tu es, que tu as vu leur offre, et propose un échange de 10 min. Sois direct et percutant.",
-    whatsapp: "WhatsApp. Entre 80 et 150 mots. Reprends la structure email mais condensée : accroche sur l'offre, valeur ajoutée, CTA 10 min. Ton chaleureux et direct.",
-    email: `Email professionnel. Inclus un objet accrocheur sur la première ligne (format 'Objet: ...'). Corps de 150-250 mots. Respecte scrupuleusement la structure et le ton de cet exemple :\n\n${emailExample}`,
+    linkedin: "LinkedIn (connexion ou message direct). MAXIMUM 300 caractères. Ultra-court : vu leur offre, on est spécialisé recrutement Sales, première sélection sous 72h. CTA direct.",
+    whatsapp: "WhatsApp. 4-5 lignes max. Même structure que l'email mais condensée au maximum.",
+    email: "Email professionnel. Inclus un objet percutant sur la première ligne (format 'Objet: ...'). Corps COURT : 5-7 lignes maximum.",
   };
 
-  const systemPrompt = `Tu es un expert en chasse de têtes et en prospection B2B.
-Tu rédiges des messages de prospection personnalisés pour ${recruiterName} de ${recruiterCompany}.
+  const systemPrompt = `Tu es un chasseur de têtes spécialisé en recrutement commercial (Sales).
+Tu rédiges des messages de prospection courts et directs pour ${recruiterName} de ${recruiterCompany} (site : https://proxima-agents.com/).
 
 Contexte de l'offre :
-- Entreprise cible : ${offer.companyName}
-- Titre du poste : ${offer.offerTitle || "non précisé"}
-- URL de l'offre : ${offer.offerUrl || "non fournie"}
-${offer.offerContent ? `- Description : ${offer.offerContent.substring(0, 600)}` : ""}
+- Entreprise : ${offer.companyName}
+- Poste : ${offer.offerTitle || "non précisé"}
+${offer.offerContent ? `- Description : ${offer.offerContent.substring(0, 800)}` : ""}
 
-Pitch du recruteur :
-${pitch || `${recruiterName} est un expert en recrutement chez ${recruiterCompany}, spécialisé dans l'identification de talents via IA.`}
-
-Contact visé :
+Contact :
 - Nom : ${contactName}
 ${contactJobTitle ? `- Titre : ${contactJobTitle}` : ""}
 ${linkedinSummary ? `- Résumé LinkedIn : ${linkedinSummary}` : ""}
 
+Pitch recruteur :
+${pitch || `${recruiterName} — recrutement spécialisé profils Sales, chez ${recruiterCompany}.`}
+
 Canal : ${channelInstructions[channel] || channelInstructions.linkedin}
 
-Rédige UNIQUEMENT le message final, sans introduction, sans guillemets, sans commentaire.
-Le message doit :
-1. Ouvrir en mentionnant précisément l'offre et l'entreprise (personnalisation réelle)
-2. Montrer que tu comprends le défi de recrutement lié à ce poste spécifique
-3. Présenter la valeur ajoutée du recruteur : TOUJOURS indiquer qu'il est "spécialisé exclusivement sur les profils Sales" — ne jamais adapter cette spécialisation au secteur de l'entreprise cible
-4. Pour email/whatsapp : inclure les 3 points risk-free (succès, tarif fixe, sans engagement)
-5. Terminer par un CTA pour un échange de 10 minutes cette semaine
-6. Signer avec le prénom du recruteur uniquement${extraInstructions ? `\n\nInstructions supplémentaires (prioritaires) :\n${extraInstructions}` : ""}`;
+Structure OBLIGATOIRE (email/whatsapp) — respecte scrupuleusement cet ordre et ce ton :
+
+"Bonjour [Prénom],
+
+J'ai vu votre recherche pour un [Intitulé du poste]. Spécialisé exclusivement sur les profils Sales, j'accompagne [type d'entreprise déduit de l'offre] pour identifier des talents capables de [mission/compétence clé déduite de l'offre].
+
+Grâce à notre outil de ciblage personnalisé, je peux vous présenter sous 3 jours des profils ayant déjà l'expérience sectorielle requise (type [2-3 entreprises similaires pertinentes]).
+
+Mon approche est simple :
+
+Zéro risque : Vous ne payez que si vous recrutez le candidat proposé.
+Coût maîtrisé : Un tarif fixe aligné sur celui d'une cooptation interne.
+
+Seriez-vous ouvert à un échange de 10 minutes cette semaine ?
+
+Bien à vous,
+[Prénom du recruteur]"
+
+En bas du message, ajoute discrètement le lien en HTML : <a href="https://proxima-agents.com/">proxima-agents.com</a>
+
+RÈGLES STRICTES :
+- Respecte exactement cette structure, dans cet ordre
+- Les éléments entre crochets sont à personnaliser à partir du contenu de l'offre
+- "Zéro risque" et "Coût maîtrisé" sont des libellés fixes, ne pas les modifier
+- Spécialisation TOUJOURS "profils Sales" — jamais le secteur de l'entreprise cible
+- Ne jamais inventer des informations absentes de l'offre${extraInstructions ? `\n\nInstructions supplémentaires (prioritaires) :\n${extraInstructions}` : ""}`;
 
   try {
     const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
@@ -123,7 +123,7 @@ Le message doit :
         { role: "system", content: systemPrompt },
         { role: "user", content: "Génère le message de prospection." },
       ],
-      max_tokens: channel === "email" ? 600 : 280,
+      max_tokens: channel === "email" ? 350 : 200,
       temperature: 0.8,
     });
 
