@@ -71,9 +71,9 @@ Spécialisé exclusivement sur les profils [domaine], j'utilise un outil de sour
 
 Mon approche est pensée pour être une aide directe à votre croissance, sans aucun risque :
 
-Facturation uniquement au succès : Vous ne payez que si vous recrutez l'un des candidats proposés.
+Facturation uniquement au succès : Vous ne payez qu'au recrutement effectif, pas avant.
 Tarif transparent : Un prix fixe aligné sur celui d'une cooptation interne (pas d'abonnement, pas de frais de dossier).
-Si les profils ne vous convainquent pas, vous ne nous devez rien.
+Zéro risque financier : Si vous n'embauchez pas, vous ne nous devez rien.
 
 Seriez-vous ouvert à un échange de 10 minutes cette semaine pour que je vous montre la pertinence des profils identifiés pour ce poste ?
 
