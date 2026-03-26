@@ -63,22 +63,40 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const contactJobTitle = contact.jobTitle || "";
   const linkedinSummary = contact.linkedinSummary || "";
 
+  const emailExample = `Bonjour [Prénom],
+
+J'ai pris connaissance de votre offre pour un [Intitulé du poste] chez [Entreprise]. Pour [mission clé du poste], je sais que le défi est de trouver un profil capable de [compétence critique liée au poste].
+
+Spécialisé exclusivement sur les profils [domaine], j'utilise un outil de sourcing par IA qui me permet de définir des critères métier très fins pour identifier ces talents sur l'ensemble des réseaux. Cela me permet de vous soumettre une première sélection qualifiée sous 3 jours.
+
+Mon approche est pensée pour être une aide directe à votre croissance, sans aucun risque :
+
+Facturation uniquement au succès : Vous ne payez que si vous recrutez l'un des candidats proposés.
+Tarif transparent : Un prix fixe aligné sur celui d'une cooptation interne (pas d'abonnement, pas de frais de dossier).
+Si les profils ne vous convainquent pas, vous ne nous devez rien.
+
+Seriez-vous ouvert à un échange de 10 minutes cette semaine pour que je vous montre la pertinence des profils identifiés pour ce poste ?
+
+Bien à vous,
+${recruiterName}`;
+
   const channelInstructions: Record<string, string> = {
-    linkedin: "LinkedIn (connexion ou message direct). Le message doit faire MAXIMUM 300 caractères. Sois direct, humain et percutant.",
-    whatsapp: "WhatsApp. Le message doit faire entre 100 et 250 mots. Sois direct et chaleureux.",
-    email: "Email professionnel. Inclus un objet accrocheur sur la première ligne (format 'Objet: ...'). Le corps doit faire 150-200 mots.",
+    linkedin: "LinkedIn (connexion ou message direct). MAXIMUM 300 caractères. Résume l'essentiel : qui tu es, que tu as vu leur offre, et propose un échange de 10 min. Sois direct et percutant.",
+    whatsapp: "WhatsApp. Entre 80 et 150 mots. Reprends la structure email mais condensée : accroche sur l'offre, valeur ajoutée, CTA 10 min. Ton chaleureux et direct.",
+    email: `Email professionnel. Inclus un objet accrocheur sur la première ligne (format 'Objet: ...'). Corps de 150-250 mots. Respecte scrupuleusement la structure et le ton de cet exemple :\n\n${emailExample}`,
   };
 
   const systemPrompt = `Tu es un expert en chasse de têtes et en prospection B2B.
 Tu rédiges des messages de prospection personnalisés pour ${recruiterName} de ${recruiterCompany}.
 
-Contexte :
-- L'entreprise cible cherche : ${offer.companyName}
+Contexte de l'offre :
+- Entreprise cible : ${offer.companyName}
+- Titre du poste : ${offer.offerTitle || "non précisé"}
 - URL de l'offre : ${offer.offerUrl || "non fournie"}
-${offer.offerContent ? `- Description du poste : ${offer.offerContent.substring(0, 500)}...` : ""}
+${offer.offerContent ? `- Description : ${offer.offerContent.substring(0, 600)}` : ""}
 
-Le recruteur se présente ainsi :
-${pitch || `Je suis ${recruiterName} de ${recruiterCompany}, expert en recrutement.`}
+Pitch du recruteur :
+${pitch || `${recruiterName} est un expert en recrutement chez ${recruiterCompany}, spécialisé dans l'identification de talents via IA.`}
 
 Contact visé :
 - Nom : ${contactName}
@@ -87,11 +105,14 @@ ${linkedinSummary ? `- Résumé LinkedIn : ${linkedinSummary}` : ""}
 
 Canal : ${channelInstructions[channel] || channelInstructions.linkedin}
 
-Rédige UNIQUEMENT le message, sans introduction, sans guillemets, sans explication. Le message doit :
-1. Montrer que tu as étudié leur profil/entreprise (personnalisation)
-2. Expliquer que tu as vu leur offre de poste et que tu es expert pour les aider à trouver le bon candidat
-3. Proposer un échange court (15 min)
-4. Se terminer par le prénom du recruteur${extraInstructions ? `\n\nInstructions supplémentaires du recruteur :\n${extraInstructions}` : ""}`;
+Rédige UNIQUEMENT le message final, sans introduction, sans guillemets, sans commentaire.
+Le message doit :
+1. Ouvrir en mentionnant précisément l'offre et l'entreprise (personnalisation réelle)
+2. Montrer que tu comprends le défi de recrutement lié à ce poste spécifique
+3. Présenter la valeur ajoutée du recruteur de façon concrète et différenciante
+4. Pour email/whatsapp : inclure les 3 points risk-free (succès, tarif fixe, sans engagement)
+5. Terminer par un CTA pour un échange de 10 minutes cette semaine
+6. Signer avec le prénom du recruteur uniquement${extraInstructions ? `\n\nInstructions supplémentaires (prioritaires) :\n${extraInstructions}` : ""}`;
 
   try {
     const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
@@ -102,7 +123,7 @@ Rédige UNIQUEMENT le message, sans introduction, sans guillemets, sans explicat
         { role: "system", content: systemPrompt },
         { role: "user", content: "Génère le message de prospection." },
       ],
-      max_tokens: channel === "email" ? 400 : 250,
+      max_tokens: channel === "email" ? 600 : 280,
       temperature: 0.8,
     });
 
