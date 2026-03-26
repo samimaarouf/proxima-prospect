@@ -67,7 +67,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
 J'ai pris connaissance de votre offre pour un [Intitulé du poste] chez [Entreprise]. Pour [mission clé du poste], je sais que le défi est de trouver un profil capable de [compétence critique liée au poste].
 
-Spécialisé exclusivement sur les profils [domaine], j'utilise un outil de sourcing par IA qui me permet de définir des critères métier très fins pour identifier ces talents sur l'ensemble des réseaux. Cela me permet de vous soumettre une première sélection qualifiée sous 3 jours.
+Spécialisé exclusivement sur les profils Sales, j'utilise un outil de sourcing par IA qui me permet de définir des critères métier très fins pour identifier ces talents sur l'ensemble des réseaux. Cela me permet de vous soumettre une première sélection qualifiée sous 3 jours.
 
 Mon approche est pensée pour être une aide directe à votre croissance, sans aucun risque :
 
@@ -109,7 +109,7 @@ Rédige UNIQUEMENT le message final, sans introduction, sans guillemets, sans co
 Le message doit :
 1. Ouvrir en mentionnant précisément l'offre et l'entreprise (personnalisation réelle)
 2. Montrer que tu comprends le défi de recrutement lié à ce poste spécifique
-3. Présenter la valeur ajoutée du recruteur de façon concrète et différenciante
+3. Présenter la valeur ajoutée du recruteur : TOUJOURS indiquer qu'il est "spécialisé exclusivement sur les profils Sales" — ne jamais adapter cette spécialisation au secteur de l'entreprise cible
 4. Pour email/whatsapp : inclure les 3 points risk-free (succès, tarif fixe, sans engagement)
 5. Terminer par un CTA pour un échange de 10 minutes cette semaine
 6. Signer avec le prénom du recruteur uniquement${extraInstructions ? `\n\nInstructions supplémentaires (prioritaires) :\n${extraInstructions}` : ""}`;
