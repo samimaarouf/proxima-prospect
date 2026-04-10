@@ -29,6 +29,25 @@
 
   let connecting = $state<string | null>(null);
 
+  // Coresignal API key
+  let coresignalKey = $state(data.coresignalApiKey ?? "");
+  let savingKey = $state(false);
+
+  async function saveCoresignalKey() {
+    savingKey = true;
+    try {
+      const fd = new FormData();
+      fd.append("key", coresignalKey);
+      const res = await fetch("?/saveApiKey", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("Erreur");
+      toast.success("Clé Coresignal sauvegardée !");
+    } catch {
+      toast.error("Impossible de sauvegarder la clé.");
+    } finally {
+      savingKey = false;
+    }
+  }
+
   const channels = [
     {
       key: "LINKEDIN",
@@ -169,10 +188,67 @@
       {/each}
     </div>
 
-    <!-- Info box -->
+    <!-- Info box Unipile -->
     <div class="rounded-lg border border-blue-100 bg-blue-50 p-4 text-xs text-blue-700 space-y-1">
       <p class="font-semibold">Comment ça marche ?</p>
       <p>Cliquez sur "Connecter", une fenêtre Unipile s'ouvre. Authentifiez-vous avec votre compte, puis revenez ici et rafraîchissez la page pour confirmer la connexion.</p>
+    </div>
+
+    <!-- Coresignal -->
+    <div>
+      <h2 class="text-2xl font-bold">Coresignal</h2>
+      <p class="text-sm text-muted-foreground mt-1">
+        Clé API pour la recherche de décisionnaires. Obtenez-la sur <a href="https://coresignal.com" target="_blank" class="underline hover:text-foreground">coresignal.com</a>.
+      </p>
+    </div>
+
+    <div class="border border-border rounded-xl bg-card p-5 space-y-4">
+      <div class="flex items-center gap-3">
+        <!-- Icon -->
+        <div class="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="font-semibold text-sm">API Key</p>
+          <p class="text-xs text-muted-foreground">Utilisée pour retrouver les décisionnaires d'une entreprise</p>
+        </div>
+        {#if data.coresignalApiKey}
+          <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium shrink-0">
+            <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+            Configurée
+          </span>
+        {:else}
+          <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0">
+            <span class="w-1.5 h-1.5 rounded-full bg-muted-foreground/50"></span>
+            Non configurée
+          </span>
+        {/if}
+      </div>
+
+      <div class="flex gap-2">
+        <input
+          type="password"
+          bind:value={coresignalKey}
+          placeholder="Collez votre clé API Coresignal…"
+          class="flex-1 px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+          autocomplete="off"
+        />
+        <button
+          onclick={saveCoresignalKey}
+          disabled={savingKey}
+          class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 shrink-0"
+        >
+          {savingKey ? "Sauvegarde…" : "Sauvegarder"}
+        </button>
+        {#if coresignalKey}
+          <button
+            onclick={() => { coresignalKey = ""; saveCoresignalKey(); }}
+            class="px-3 py-2 text-sm border border-destructive/30 text-destructive rounded-md hover:bg-destructive/5 transition-colors shrink-0"
+          >
+            Supprimer
+          </button>
+        {/if}
+      </div>
     </div>
   </main>
 </div>

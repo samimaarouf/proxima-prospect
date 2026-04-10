@@ -13,6 +13,7 @@ export const load: PageServerLoad = async ({ locals }) => {
       unipileLinkedInAccountId: user.unipileLinkedInAccountId,
       unipileWhatsAppAccountId: user.unipileWhatsAppAccountId,
       unipileAccountId: user.unipileAccountId,
+      coresignalApiKey: user.coresignalApiKey,
     })
     .from(user)
     .where(eq(user.id, locals.user.id))
@@ -44,10 +45,23 @@ export const load: PageServerLoad = async ({ locals }) => {
     if (profile?.unipileAccountId) emailAccount = { id: profile.unipileAccountId };
   }
 
-  return { linkedinAccount, whatsappAccount, emailAccount };
+  return {
+    linkedinAccount,
+    whatsappAccount,
+    emailAccount,
+    coresignalApiKey: profile?.coresignalApiKey ?? null,
+  };
 };
 
 export const actions: Actions = {
+  saveApiKey: async ({ locals, request }) => {
+    if (!locals.user) throw redirect(302, "/login");
+    const formData = await request.formData();
+    const key = (formData.get("key") as string | null)?.trim() || null;
+    await db.update(user).set({ coresignalApiKey: key }).where(eq(user.id, locals.user.id));
+    return { success: true };
+  },
+
   disconnect: async ({ locals, request }) => {
     if (!locals.user) throw redirect(302, "/login");
 

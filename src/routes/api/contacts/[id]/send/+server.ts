@@ -42,7 +42,11 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   }
 
   const contact = contacts[0];
-  const messageToSend = customMessage || contact.aiMessage;
+  const messageToSend =
+    customMessage ||
+    (channel === "linkedin"
+      ? contact.aiMessageLinkedin || contact.aiMessage
+      : contact.aiMessage);
 
   if (!messageToSend) {
     return json({ error: "Aucun message à envoyer. Générez d'abord un message IA." }, { status: 400 });

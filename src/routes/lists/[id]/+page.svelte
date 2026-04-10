@@ -268,16 +268,24 @@
   // ===========================
   // Import + auto-enrich + auto-scrape
   // ===========================
+  const isCsvFile = $derived(importFile ? importFile.name.toLowerCase().endsWith(".csv") : false);
+
   async function handleImport() {
-    if (!importFile) { toast.error("Sélectionnez un fichier Excel"); return; }
+    if (!importFile) { toast.error("Sélectionnez un fichier"); return; }
     importing = true;
     const formData = new FormData();
     formData.append("file", importFile);
     try {
-      const res = await fetch(`/api/lists/${list.id}/import`, { method: "POST", body: formData });
+      const endpoint = isCsvFile
+        ? `/api/lists/${list.id}/import-csv`
+        : `/api/lists/${list.id}/import`;
+      const res = await fetch(endpoint, { method: "POST", body: formData });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Erreur");
       const result = await res.json();
-      toast.success(`Import terminé : ${result.contactsCreated} contacts, ${result.offersCreated} offre(s)`);
+      const successMsg = isCsvFile
+        ? `Import CSV terminé : ${result.imported} offre(s) importée(s)`
+        : `Import terminé : ${result.contactsCreated} contacts, ${result.offersCreated} offre(s)`;
+      toast.success(successMsg);
 
       // Reload data
       const listData = await (await fetch(`/api/lists/${list.id}`)).json();
@@ -390,6 +398,10 @@
     importFile = (e.target as HTMLInputElement).files?.[0] || null;
   }
 
+  function handleExport() {
+    window.location.href = `/api/lists/${list.id}/export`;
+  }
+
   function delay(ms: number) {
     return new Promise((r) => setTimeout(r, ms));
   }
@@ -446,11 +458,18 @@
         {offers.length} offre{offers.length !== 1 ? "s" : ""} · {totalContacts} contact{totalContacts !== 1 ? "s" : ""}
       </span>
       <button
+        onclick={handleExport}
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-input rounded-md text-sm hover:bg-accent transition-colors"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Exporter CSV
+      </button>
+      <button
         onclick={() => (showImportDialog = true)}
         class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-input rounded-md text-sm hover:bg-accent transition-colors"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Importer Excel
+        Importer
       </button>
     </div>
   </div>
@@ -479,12 +498,12 @@
     <div class="flex flex-col items-center justify-center h-64 text-muted-foreground px-6">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-4 opacity-30"><path d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
       <p class="text-base font-medium mb-2">Aucune offre</p>
-      <p class="text-sm mb-4">Importez un fichier Excel pour commencer</p>
+      <p class="text-sm mb-4">Importez un fichier Excel ou CSV pour commencer</p>
       <button
         onclick={() => (showImportDialog = true)}
         class="px-5 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-md text-sm font-medium transition-colors"
       >
-        Importer Excel
+        Importer
       </button>
     </div>
   {:else}
@@ -522,35 +541,49 @@
 {#if showImportDialog}
   <div
     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-    onclick={(e) => { if (e.target === e.currentTarget) showImportDialog = false; }}
-    onkeydown={(e) => { if (e.key === "Escape") showImportDialog = false; }}
+    onclick={(e) => { if (e.target === e.currentTarget) { showImportDialog = false; importFile = null; } }}
+    onkeydown={(e) => { if (e.key === "Escape") { showImportDialog = false; importFile = null; } }}
     role="dialog"
     aria-modal="true"
     tabindex="-1"
   >
     <div class="bg-white border border-border rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
-      <h3 class="text-lg font-semibold">Importer un fichier Excel</h3>
-      <p class="text-sm text-muted-foreground">
-        Premier onglet. Colonnes : Entreprise | Intitulé du poste | URL Offre | Localisation | LinkedIn | Tél. 1 | Tél. 2 | Email | Date | Touches | Action | Étape | Notes
-      </p>
-      <p class="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded p-2">
-        Ancien format (sans intitulé/localisation) également supporté.
-      </p>
+      <h3 class="text-lg font-semibold">Importer</h3>
+
+      {#if !importFile}
+        <p class="text-sm text-muted-foreground">
+          Sélectionnez un fichier <strong>.csv</strong> (export calibre) ou <strong>.xlsx</strong> (format Excel).
+        </p>
+      {:else if isCsvFile}
+        <div class="text-sm text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg p-3 space-y-1">
+          <p class="font-medium">Format CSV calibre détecté</p>
+          <p class="text-xs text-indigo-600">Une ligne = une offre + un décisionnaire (CEO/Fondateur). L'enrichissement LinkedIn se lancera automatiquement.</p>
+        </div>
+      {:else}
+        <div class="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-3 space-y-1">
+          <p class="font-medium">Format Excel détecté</p>
+          <p class="text-xs text-amber-600">Colonnes : Entreprise | Intitulé du poste | URL Offre | Localisation | LinkedIn | Tél. 1 | Tél. 2 | Email…</p>
+        </div>
+      {/if}
+
       <div
-        class="border-2 border-dashed border-gray-200 rounded-lg p-8 text-center cursor-pointer hover:border-indigo-400 transition-colors"
+        class="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors {importFile ? 'border-indigo-300 bg-indigo-50/30' : 'border-gray-200 hover:border-indigo-400'}"
         onclick={() => document.getElementById("file-input")?.click()}
         role="button"
         tabindex="0"
         onkeydown={(e) => e.key === "Enter" && document.getElementById("file-input")?.click()}
       >
-        <input id="file-input" type="file" accept=".xlsx,.xls" class="hidden" onchange={handleFileInput} />
+        <input id="file-input" type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange={handleFileInput} />
         {#if importFile}
           <p class="font-medium text-sm">📄 {importFile.name}</p>
-          <p class="text-muted-foreground text-xs mt-1">{(importFile.size / 1024).toFixed(1)} KB</p>
+          <p class="text-muted-foreground text-xs mt-1">{(importFile.size / 1024).toFixed(1)} KB · <span class="text-indigo-500 underline">Changer</span></p>
         {:else}
-          <p class="text-muted-foreground text-sm">Cliquez pour sélectionner un fichier .xlsx</p>
+          <svg class="mx-auto mb-2 text-gray-300" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <p class="text-muted-foreground text-sm">Cliquez pour sélectionner</p>
+          <p class="text-muted-foreground text-xs mt-1">.csv ou .xlsx</p>
         {/if}
       </div>
+
       <div class="flex gap-3 justify-end">
         <button
           onclick={() => { showImportDialog = false; importFile = null; }}

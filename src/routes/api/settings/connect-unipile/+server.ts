@@ -2,10 +2,10 @@ import { json, error, redirect } from "@sveltejs/kit";
 import { getUnipileService } from "$lib/services/UnipileService";
 import type { RequestHandler } from "./$types";
 
-const PROVIDER_MAP: Record<string, ("GOOGLE" | "MICROSOFT" | "IMAP" | "LINKEDIN" | "WHATSAPP")[]> = {
+const PROVIDER_MAP: Record<string, ("GOOGLE" | "OUTLOOK" | "MAIL" | "LINKEDIN" | "WHATSAPP")[]> = {
   LINKEDIN: ["LINKEDIN"],
   WHATSAPP: ["WHATSAPP"],
-  EMAIL: ["GOOGLE", "MICROSOFT", "IMAP"],
+  EMAIL: ["GOOGLE", "OUTLOOK", "MAIL"],
 };
 
 export const POST: RequestHandler = async ({ locals, request, url }) => {

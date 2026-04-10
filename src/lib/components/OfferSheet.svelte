@@ -22,6 +22,7 @@
     linkedinData: unknown;
     linkedinSummary: string | null;
     aiMessage: string | null;
+    aiMessageLinkedin: string | null;
     contactStatus: string | null;
     lastAction: string | null;
     nextStep: string | null;
@@ -61,7 +62,11 @@
   };
 
   let deliveryChannel = $state<"linkedin" | "whatsapp" | "email">("linkedin");
-  let messages = $state<Record<string, string>>({});
+  /** WhatsApp + email : même corps (stocké dans contact.aiMessage avec éventuellement Objet:) */
+  let longMessages = $state<Record<string, string>>({});
+  let linkedinMessages = $state<Record<string, string>>({});
+  /** Mode aperçu (rendu HTML) par contact */
+  let previewOpen = $state<Record<string, boolean>>({});
   let generatingFor = $state<string | null>(null);
   let generatingAll = $state(false);
   let savingFor = $state<string | null>(null);
@@ -111,6 +116,113 @@
   // Recipient selection per contact (value = the actual phone/email string)
   let selectedRecipient = $state<Record<string, string>>({});
 
+  // ─── Find decision-makers ───────────────────────────────────
+  type Candidate = {
+    fullName: string;
+    jobTitle: string;
+    linkedinUrl: string;
+    email: string | null;
+    location: string | null;
+  };
+
+  const ROLE_CATEGORIES = [
+    {
+      key: "founder_ceo",
+      label: "Fondateur / CEO",
+      description: "Founder, Co-Founder, CEO, Président, DG…",
+      color: "bg-purple-100 text-purple-700 border-purple-200",
+    },
+    {
+      key: "sales",
+      label: "Direction Commerciale",
+      description: "VP Sales, Head of Sales, CRO, Directeur commercial…",
+      color: "bg-blue-100 text-blue-700 border-blue-200",
+    },
+    {
+      key: "coo",
+      label: "Direction des Opérations",
+      description: "COO, Chief Operating Officer, Chief of Staff…",
+      color: "bg-amber-100 text-amber-700 border-amber-200",
+    },
+    {
+      key: "hr",
+      label: "RH / Recrutement",
+      description: "HR Manager, Talent Acquisition, Responsable RH…",
+      color: "bg-green-100 text-green-700 border-green-200",
+    },
+  ] as const;
+
+  let showDmModal = $state(false);
+  let dmStep = $state<"select" | "results">("select");
+  let dmSelectedRoles = $state<Set<string>>(new Set(["founder_ceo"]));
+  let dmSearching = $state(false);
+  let dmCandidates = $state<Candidate[]>([]);
+  let dmSelectedCandidates = $state<Set<number>>(new Set());
+  let dmAdding = $state(false);
+  let dmError = $state<string | null>(null);
+
+  async function searchDecisionMakers() {
+    if (!dmSelectedRoles.size) { dmError = "Sélectionnez au moins un rôle."; return; }
+    dmError = null;
+    dmSearching = true;
+    try {
+      const res = await fetch(`/api/offers/${offer.id}/find-decision-makers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: Array.from(dmSelectedRoles) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Erreur");
+      dmCandidates = json.candidates ?? [];
+      // Pre-select all
+      dmSelectedCandidates = new Set(dmCandidates.map((_, i) => i));
+      dmStep = "results";
+    } catch (e) {
+      dmError = e instanceof Error ? e.message : "Erreur lors de la recherche";
+    } finally {
+      dmSearching = false;
+    }
+  }
+
+  async function addSelectedCandidates() {
+    dmAdding = true;
+    try {
+      const toAdd = dmCandidates.filter((_, i) => dmSelectedCandidates.has(i));
+      for (const c of toAdd) {
+        const res = await fetch(`/api/offers/${offer.id}/add-contact`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            linkedinUrl: c.linkedinUrl,
+            fullName: c.fullName,
+            jobTitle: c.jobTitle,
+            email: c.email,
+          }),
+        });
+        if (res.ok) {
+          const newContact = await res.json();
+          onContactUpdated?.(newContact);
+        }
+      }
+      toast.success(`${toAdd.length} décisionnaire(s) ajouté(s) !`);
+      showDmModal = false;
+      dmStep = "select";
+    } catch {
+      toast.error("Erreur lors de l'ajout des contacts");
+    } finally {
+      dmAdding = false;
+    }
+  }
+
+  function openDmModal() {
+    dmStep = "select";
+    dmSelectedRoles = new Set(["founder_ceo"]);
+    dmCandidates = [];
+    dmSelectedCandidates = new Set();
+    dmError = null;
+    showDmModal = true;
+  }
+
   // Contacts that have a LinkedIn URL but haven't been enriched yet
   const unenrichedCount = $derived(
     contacts.filter((c) => c.linkedinUrl && !c.linkedinData).length
@@ -124,6 +236,23 @@
       return { subject, body };
     }
     return { subject: "", body: msg };
+  }
+
+  /** Convertit le texte brut (avec éventuelles balises <a>) en HTML safe pour aperçu */
+  function messageToPreviewHtml(text: string): string {
+    // Échappe tous les caractères HTML
+    let html = text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    // Restaure uniquement les <a href="...">...</a> générés par l'IA
+    html = html.replace(
+      /&lt;a href="([^"&]+)"&gt;(.+?)&lt;\/a&gt;/g,
+      '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-indigo-600 underline hover:text-indigo-800 transition-colors">$2</a>'
+    );
+    // Sauts de ligne → <br>
+    html = html.replace(/\n/g, "<br>");
+    return html;
   }
 
   // Returns the available recipient options for a contact given the current channel
@@ -151,20 +280,38 @@
 
   const linkedinCharLimit = 300;
 
-  // Initialize messages from existing aiMessage (extract subject for email)
-  $effect(() => {
-    const initMsg: Record<string, string> = {};
+  function buildLongAiMessage(contactId: string): string {
+    const body = longMessages[contactId]?.trim() ?? "";
+    const subject = (subjects[contactId] || "").trim();
+    if (!body && !subject) return "";
+    return subject ? `Objet: ${subject}\n\n${body}` : body;
+  }
+
+  // Intentional one-time init from initial contacts snapshot.
+  // We do NOT use $effect here because we don't want this to re-run every time
+  // onContactUpdated propagates back through the parent: generateMessage already
+  // sets linkedinMessages / longMessages directly and that must not be overwritten.
+  function initMessagesFromContacts(cs: Contact[]) {
+    const initLong: Record<string, string> = {};
+    const initLi: Record<string, string> = {};
     const initSubj: Record<string, string> = {};
-    for (const c of contacts) {
+    for (const c of cs) {
+      if (c.aiMessageLinkedin?.trim()) {
+        initLi[c.id] = c.aiMessageLinkedin;
+      }
       if (c.aiMessage) {
         const { subject, body } = extractSubjectFromMessage(c.aiMessage);
-        initMsg[c.id] = subject ? body : c.aiMessage;
+        initLong[c.id] = subject ? body : c.aiMessage;
         if (subject) initSubj[c.id] = subject;
       }
     }
-    messages = initMsg;
-    subjects = initSubj;
-  });
+    return { initLi, initLong, initSubj };
+  }
+
+  const { initLi, initLong, initSubj } = initMessagesFromContacts(contacts);
+  longMessages = initLong;
+  linkedinMessages = initLi;
+  subjects = initSubj;
 
   function getProfilePicture(contact: Contact): string | null {
     const profile = (contact.linkedinData ?? null) as Record<string, unknown> | null;
@@ -203,13 +350,14 @@
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Erreur");
       const updated = await res.json();
-      const raw = updated.aiMessage || "";
-      if (deliveryChannel === "email") {
+      if (deliveryChannel === "linkedin") {
+        const raw = updated.aiMessageLinkedin || "";
+        linkedinMessages = { ...linkedinMessages, [contactId]: raw };
+      } else {
+        const raw = updated.aiMessage || "";
         const { subject, body } = extractSubjectFromMessage(raw);
         if (subject) subjects = { ...subjects, [contactId]: subject };
-        messages = { ...messages, [contactId]: body };
-      } else {
-        messages = { ...messages, [contactId]: raw };
+        longMessages = { ...longMessages, [contactId]: subject ? body : raw };
       }
       onContactUpdated?.({ ...contacts.find((c) => c.id === contactId)!, ...updated });
       toast.success("Message généré");
@@ -236,13 +384,14 @@
         });
         if (res.ok) {
           const updated = await res.json();
-          const raw = updated.aiMessage || "";
-          if (deliveryChannel === "email") {
+          if (deliveryChannel === "linkedin") {
+            const raw = updated.aiMessageLinkedin || "";
+            linkedinMessages = { ...linkedinMessages, [contact.id]: raw };
+          } else {
+            const raw = updated.aiMessage || "";
             const { subject, body } = extractSubjectFromMessage(raw);
             if (subject) subjects = { ...subjects, [contact.id]: subject };
-            messages = { ...messages, [contact.id]: body };
-          } else {
-            messages = { ...messages, [contact.id]: raw };
+            longMessages = { ...longMessages, [contact.id]: subject ? body : raw };
           }
           onContactUpdated?.({ ...contact, ...updated });
           count++;
@@ -256,14 +405,21 @@
   }
 
   async function saveMessage(contact: Contact) {
-    const msg = messages[contact.id];
-    if (msg === undefined) return;
+    if (deliveryChannel === "linkedin") {
+      if (linkedinMessages[contact.id] === undefined) return;
+    } else if (longMessages[contact.id] === undefined) {
+      return;
+    }
     savingFor = contact.id;
     try {
+      const payload =
+        deliveryChannel === "linkedin"
+          ? { aiMessageLinkedin: linkedinMessages[contact.id] ?? "" }
+          : { aiMessage: buildLongAiMessage(contact.id) };
       const res = await fetch(`/api/contacts/${contact.id}/update-status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ aiMessage: msg }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error();
       const updated = await res.json();
@@ -331,7 +487,11 @@
   }
 
   async function sendAllMessages() {
-    const toSend = contacts.filter((c) => messages[c.id] !== undefined && messages[c.id].trim());
+    const toSend = contacts.filter((c) => {
+      const body =
+        deliveryChannel === "linkedin" ? linkedinMessages[c.id] : longMessages[c.id];
+      return body !== undefined && body.trim().length > 0;
+    });
     if (!toSend.length) return;
 
     isSending = true;
@@ -345,7 +505,10 @@
           : undefined;
 
         // Rebuild full message (prepend subject for email)
-        const bodyText = messages[contact.id];
+        const bodyText =
+          deliveryChannel === "linkedin"
+            ? linkedinMessages[contact.id]
+            : longMessages[contact.id];
         const subject = deliveryChannel === "email" ? (subjects[contact.id] || "").trim() : "";
         const fullMessage = subject ? `Objet: ${subject}\n\n${bodyText}` : bodyText;
 
@@ -465,7 +628,11 @@
   // A contact is "ready to send" if it has a message AND a resolved recipient
   const contactsWithMessages = $derived(
     contacts.filter((c) => {
-      if (!messages[c.id]?.trim()) return false;
+      const hasBody =
+        deliveryChannel === "linkedin"
+          ? linkedinMessages[c.id]?.trim()
+          : longMessages[c.id]?.trim();
+      if (!hasBody) return false;
       if (deliveryChannel === "linkedin") return true;
       const opts = getRecipientOptions(c);
       if (opts.length === 0) return false;
@@ -578,7 +745,7 @@
   {/if}
 
   <!-- Channel + generate all bar -->
-  <div class="flex items-center gap-3 px-6 py-3 border-b border-border bg-muted/30 flex-shrink-0 flex-wrap">
+  <div class="flex items-center gap-3 px-6 py-3 border-b border-border bg-muted/30 flex-shrink-0 flex-wrap" style="row-gap: 0.5rem;">
     <!-- Channel toggle -->
     <div class="inline-flex border border-border rounded-full overflow-hidden text-xs">
       {#each [["linkedin", "LinkedIn"], ["whatsapp", "WhatsApp"], ["email", "Email"]] as [ch, label]}
@@ -593,6 +760,15 @@
     </div>
 
     <div class="flex-1"></div>
+
+    <!-- Find decision-makers -->
+    <button
+      onclick={openDmModal}
+      class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs border border-indigo-200 text-indigo-700 bg-indigo-50 rounded-md hover:bg-indigo-100 transition-colors"
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
+      Trouver des décisionnaires
+    </button>
 
     <button
       onclick={generateAllMessages}
@@ -620,7 +796,8 @@
         {@const pic = getProfilePicture(contact)}
         {@const name = contact.fullName || contact.email || contact.linkedinUrl || "Contact"}
         {@const status = statusLabels[contact.contactStatus || "to_contact"] || statusLabels.to_contact}
-        {@const msg = messages[contact.id]}
+        {@const msg =
+          deliveryChannel === "linkedin" ? linkedinMessages[contact.id] : longMessages[contact.id]}
         {@const isGenerating = generatingFor === contact.id}
         {@const isSaving = savingFor === contact.id}
         {@const isEnriching = enrichingFor === contact.id}
@@ -844,14 +1021,53 @@
                 />
               {/if}
 
-              <textarea
-                value={msg}
-                oninput={(e) => { messages = { ...messages, [contact.id]: (e.target as HTMLTextAreaElement).value }; }}
-                rows={5}
-                maxlength={deliveryChannel === "linkedin" ? linkedinCharLimit : undefined}
-                class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-                placeholder="Le message apparaîtra ici…"
-              ></textarea>
+              <!-- Barre édition / aperçu -->
+              <div class="flex items-center justify-between mb-1">
+                <div class="inline-flex rounded-md border border-input overflow-hidden text-xs">
+                  <button
+                    type="button"
+                    onclick={() => (previewOpen = { ...previewOpen, [contact.id]: false })}
+                    class="px-2.5 py-1 transition-colors {!previewOpen[contact.id] ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:bg-accent'}"
+                  >Éditer</button>
+                  <button
+                    type="button"
+                    onclick={() => (previewOpen = { ...previewOpen, [contact.id]: true })}
+                    class="px-2.5 py-1 transition-colors {previewOpen[contact.id] ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:bg-accent'}"
+                  >
+                    <span class="flex items-center gap-1">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                      Aperçu
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {#if previewOpen[contact.id]}
+                <!-- Rendu HTML du message -->
+                <div
+                  class="w-full rounded-md border border-input bg-muted/30 px-3 py-2.5 text-sm leading-relaxed min-h-[9rem] whitespace-pre-wrap"
+                  style="word-break: break-word"
+                >
+                  <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                  {@html messageToPreviewHtml(msg)}
+                </div>
+              {:else}
+                <textarea
+                  value={msg}
+                  oninput={(e) => {
+                    const v = (e.target as HTMLTextAreaElement).value;
+                    if (deliveryChannel === "linkedin") {
+                      linkedinMessages = { ...linkedinMessages, [contact.id]: v };
+                    } else {
+                      longMessages = { ...longMessages, [contact.id]: v };
+                    }
+                  }}
+                  rows={8}
+                  maxlength={deliveryChannel === "linkedin" ? linkedinCharLimit : undefined}
+                  class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+                  placeholder="Le message apparaîtra ici…"
+                ></textarea>
+              {/if}
 
               <!-- Recipient selector (whatsapp/email, only if ≥2 options) -->
               {#if deliveryChannel !== "linkedin"}
@@ -983,3 +1199,183 @@
     </button>
   </div>
 </div>
+
+<!-- ─── Decision-Makers Modal ─────────────────────────────── -->
+{#if showDmModal}
+  <div
+    class="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4"
+    onclick={(e) => { if (e.target === e.currentTarget) showDmModal = false; }}
+    onkeydown={(e) => { if (e.key === "Escape") showDmModal = false; }}
+    role="dialog"
+    aria-modal="true"
+    tabindex="-1"
+  >
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]">
+
+      <!-- Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-border">
+        <div>
+          <h3 class="text-base font-semibold">Trouver des décisionnaires</h3>
+          <p class="text-xs text-muted-foreground mt-0.5">{offer.companyName}</p>
+        </div>
+        <button
+          onclick={() => (showDmModal = false)}
+          aria-label="Fermer"
+          class="p-2 rounded-md hover:bg-accent transition-colors text-muted-foreground"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <!-- Step indicator -->
+      <div class="flex items-center gap-2 px-6 py-2 border-b border-border bg-muted/20 text-xs text-muted-foreground">
+        <span class="font-medium {dmStep === 'select' ? 'text-indigo-600' : 'text-green-600'}">1. Rôles</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="font-medium {dmStep === 'results' ? 'text-indigo-600' : ''}">2. Résultats</span>
+      </div>
+
+      <!-- Body -->
+      <div class="flex-1 overflow-y-auto px-6 py-5">
+
+        {#if dmStep === "select"}
+          <p class="text-sm text-muted-foreground mb-4">
+            Sélectionnez les catégories de décisionnaires à rechercher chez <strong>{offer.companyName}</strong> via Coresignal.
+          </p>
+          <div class="space-y-3">
+            {#each ROLE_CATEGORIES as cat}
+              {@const checked = dmSelectedRoles.has(cat.key)}
+              <button
+                type="button"
+                onclick={() => {
+                  const next = new Set(dmSelectedRoles);
+                  if (next.has(cat.key)) next.delete(cat.key); else next.add(cat.key);
+                  dmSelectedRoles = next;
+                }}
+                class="w-full flex items-start gap-3 p-3 rounded-xl border-2 text-left transition-all {checked ? 'border-indigo-400 bg-indigo-50' : 'border-border hover:border-indigo-200 hover:bg-muted/30'}"
+              >
+                <!-- Checkbox visual -->
+                <div class="mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 {checked ? 'border-indigo-500 bg-indigo-500' : 'border-muted-foreground/40'}">
+                  {#if checked}
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  {/if}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <span class="text-sm font-medium">{cat.label}</span>
+                  <p class="text-xs text-muted-foreground mt-0.5">{cat.description}</p>
+                </div>
+                <span class="text-xs px-2 py-0.5 rounded-full border {cat.color} flex-shrink-0 mt-0.5">{cat.label.split(" ")[0]}</span>
+              </button>
+            {/each}
+          </div>
+
+          {#if dmError}
+            <p class="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{dmError}</p>
+          {/if}
+
+        {:else}
+          <!-- Results -->
+          {#if dmCandidates.length === 0}
+            <div class="flex flex-col items-center justify-center py-12 text-muted-foreground text-sm text-center">
+              <svg class="mb-3 opacity-30" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <p class="font-medium">Aucun décisionnaire trouvé</p>
+              <p class="text-xs mt-1 text-muted-foreground/70">Essayez d'autres catégories ou vérifiez l'URL de l'offre</p>
+              <button onclick={() => (dmStep = "select")} class="mt-4 text-xs text-indigo-600 underline">← Modifier la sélection</button>
+            </div>
+          {:else}
+            <div class="flex items-center justify-between mb-3">
+              <p class="text-sm font-medium">{dmCandidates.length} décisionnaire{dmCandidates.length > 1 ? "s" : ""} trouvé{dmCandidates.length > 1 ? "s" : ""}</p>
+              <div class="flex items-center gap-3">
+                <button onclick={() => (dmSelectedCandidates = new Set(dmCandidates.map((_, i) => i)))} class="text-xs text-indigo-600 hover:underline">Tout sélectionner</button>
+                <button onclick={() => (dmSelectedCandidates = new Set())} class="text-xs text-muted-foreground hover:underline">Désélectionner</button>
+              </div>
+            </div>
+            <div class="space-y-2">
+              {#each dmCandidates as candidate, i}
+                {@const isSelected = dmSelectedCandidates.has(i)}
+                <button
+                  type="button"
+                  onclick={() => {
+                    const next = new Set(dmSelectedCandidates);
+                    if (next.has(i)) next.delete(i); else next.add(i);
+                    dmSelectedCandidates = next;
+                  }}
+                  class="w-full flex items-start gap-3 p-3 rounded-xl border-2 text-left transition-all {isSelected ? 'border-indigo-400 bg-indigo-50' : 'border-border hover:border-indigo-200'}"
+                >
+                  <!-- Checkbox -->
+                  <div class="mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 {isSelected ? 'border-indigo-500 bg-indigo-500' : 'border-muted-foreground/40'}">
+                    {#if isSelected}
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    {/if}
+                  </div>
+                  <!-- Avatar initial -->
+                  <div class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+                    {candidate.fullName.charAt(0).toUpperCase()}
+                  </div>
+                  <!-- Info -->
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-foreground">{candidate.fullName}</p>
+                    <p class="text-xs text-muted-foreground">{candidate.jobTitle}</p>
+                    {#if candidate.email}
+                      <p class="text-xs text-muted-foreground/70 mt-0.5">✉ {candidate.email}</p>
+                    {/if}
+                  </div>
+                  <!-- LinkedIn link -->
+                  <a
+                    href={candidate.linkedinUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onclick={(e) => e.stopPropagation()}
+                    class="p-1.5 rounded-md hover:bg-blue-100 transition-colors flex-shrink-0 mt-0.5"
+                    title="Voir sur LinkedIn"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="#0a66c2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                  </a>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        {/if}
+      </div>
+
+      <!-- Footer -->
+      <div class="flex-shrink-0 border-t border-border px-6 py-4 flex items-center justify-between gap-3">
+        {#if dmStep === "select"}
+          <span class="text-xs text-muted-foreground">
+            {dmSelectedRoles.size} catégorie{dmSelectedRoles.size > 1 ? "s" : ""} sélectionnée{dmSelectedRoles.size > 1 ? "s" : ""}
+          </span>
+          <button
+            onclick={searchDecisionMakers}
+            disabled={dmSearching || dmSelectedRoles.size === 0}
+            class="inline-flex items-center gap-2 px-5 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {#if dmSearching}
+              <span class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              Recherche en cours…
+            {:else}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              Rechercher
+            {/if}
+          </button>
+        {:else}
+          <button onclick={() => (dmStep = "select")} class="text-sm text-muted-foreground hover:text-foreground transition-colors">
+            ← Modifier
+          </button>
+          <button
+            onclick={addSelectedCandidates}
+            disabled={dmAdding || dmSelectedCandidates.size === 0}
+            class="inline-flex items-center gap-2 px-5 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {#if dmAdding}
+              <span class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              Ajout…
+            {:else}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+              Ajouter {dmSelectedCandidates.size > 0 ? `(${dmSelectedCandidates.size})` : ""}
+            {/if}
+          </button>
+        {/if}
+      </div>
+
+    </div>
+  </div>
+{/if}

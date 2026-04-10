@@ -121,6 +121,8 @@ export const prospectContact = pgTable("prospect_contact", {
   linkedinData: jsonb("linkedin_data"),
   linkedinSummary: text("linkedin_summary"),
   aiMessage: text("ai_message"),
+  /** Invitation LinkedIn (< 300 car.) — distinct de WhatsApp / email (`aiMessage`) */
+  aiMessageLinkedin: text("ai_message_linkedin"),
   // Status
   contactStatus: text("contact_status").default("to_contact"),
   createdAt: timestamp("created_at").defaultNow().notNull(),

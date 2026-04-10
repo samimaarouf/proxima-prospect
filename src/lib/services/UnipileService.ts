@@ -227,15 +227,21 @@ export class UnipileService {
    */
   async sendEmail(params: UnipileSendEmailParams): Promise<UnipileSendEmailResult> {
     try {
-      // Convert plain text to HTML to preserve line breaks in email clients.
-      // If the body is already HTML (contains tags), use it as-is.
-      const isHtml = /<[a-z][\s\S]*>/i.test(params.body);
-      const htmlBody = isHtml
+      // Convert to HTML to preserve line breaks in email clients.
+      // If the body already contains full HTML structure (<html> or <body>), use it as-is.
+      // If it's plain text (possibly with some inline <a> tags), escape & convert \n → <br>.
+      const isFullHtml = /<html[\s>]|<body[\s>]/i.test(params.body);
+      const htmlBody = isFullHtml
         ? params.body
-        : `<div>${params.body
+        : `<div style="font-family:sans-serif;line-height:1.6">${params.body
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
+            // Restore safe <a href="..."> links we generated
+            .replace(
+              /&lt;a href="([^"&]+)"&gt;(.+?)&lt;\/a&gt;/g,
+              '<a href="$1" target="_blank" rel="noopener noreferrer">$2</a>'
+            )
             .replace(/\n/g, "<br>")}</div>`;
 
       const formData = new FormData();
@@ -483,7 +489,7 @@ export class UnipileService {
    * Generate a hosted auth link for connecting accounts
    */
   async generateHostedAuthLink(params: {
-    providers: ("GOOGLE" | "MICROSOFT" | "IMAP" | "LINKEDIN" | "WHATSAPP")[];
+    providers: ("GOOGLE" | "OUTLOOK" | "MAIL" | "LINKEDIN" | "WHATSAPP")[];
     successRedirectUrl: string;
     failureRedirectUrl: string;
     notifyUrl?: string;

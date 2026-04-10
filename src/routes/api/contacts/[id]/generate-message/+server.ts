@@ -6,6 +6,11 @@ import OpenAI from "openai";
 import { env } from "$env/dynamic/private";
 import type { RequestHandler } from "./$types";
 
+function firstNameFromFullName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  return parts[0] || "";
+}
+
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) {
     return json({ error: "Non authentifié" }, { status: 401 });
@@ -27,7 +32,6 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
   const contact = contacts[0];
 
-  // Get the offer for company and job info
   const offers = await db
     .select()
     .from(prospectOffer)
@@ -39,7 +43,6 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     return json({ error: "Offre introuvable" }, { status: 404 });
   }
 
-  // Get list and user pitch
   const listResult = await db
     .select({ pitch: prospectList.pitch })
     .from(prospectList)
@@ -48,7 +51,6 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
   const pitch = listResult[0]?.pitch || "";
 
-  // Get recruiter profile
   const userProfile = await db
     .select({ name: user.name, company: user.company })
     .from(user)
@@ -58,78 +60,168 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const recruiterName = userProfile[0]?.name || "Le recruteur";
   const recruiterCompany = userProfile[0]?.company || "notre entreprise";
 
-  // Build the prompt
   const contactName = contact.fullName || "le/la décideur(se)";
+  const contactFirstName = firstNameFromFullName(contact.fullName || "") || "Madame/Monsieur";
+  const recruiterFirstName = firstNameFromFullName(recruiterName) || recruiterName;
   const contactJobTitle = contact.jobTitle || "";
   const linkedinSummary = contact.linkedinSummary || "";
 
-  const channelInstructions: Record<string, string> = {
-    linkedin: "LinkedIn (connexion ou message direct). MAXIMUM 300 caractères. Ultra-court : vu leur offre, on est spécialisé recrutement Sales, première sélection sous 72h. CTA direct.",
-    whatsapp: "WhatsApp. 4-5 lignes max. Même structure que l'email mais condensée au maximum.",
-    email: "Email professionnel. Inclus un objet percutant sur la première ligne (format 'Objet: ...'). Corps COURT : 5-7 lignes maximum.",
-  };
+  const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
-  const systemPrompt = `Rôle : Tu es un Talent Acquisition Manager spécialisé dans la chasse de profils Sales à haut niveau. Tu rédiges des messages de prospection pour ${recruiterName} de ${recruiterCompany} (https://proxima-agents.com/).
+  // ── LinkedIn : court, distinct de WhatsApp / email ; stocké dans ai_message_linkedin ──
+  if (channel === "linkedin") {
+    const linkedinSystemPrompt = `Tu es un chasseur de têtes spécialisé profils Sales. Tu rédiges une note d'invitation LinkedIn (connexion) que ${recruiterName} enverra.
+
+CONTRAINTE ABSOLUE : le message final doit faire STRICTEMENT moins de 300 caractères (espaces inclus), sans saut de ligne (une seule ligne ou tout sur une ligne).
+
+RÈGLE CRITIQUE — SALUTATION :
+- Après "Bonjour", tu utilises UNIQUEMENT le prénom du DÉCIDEUR / destinataire fourni dans les données utilisateur (variable "prénom du client").
+- Tu ne salues JAMAIS avec le prénom ou le nom du recruteur (${recruiterFirstName} / ${recruiterName}).
+
+SIGNATURE :
+- En fin de message uniquement, signe brièvement avec le prénom du recruteur : ${recruiterFirstName} (ou les initiales si l'espace manque).
+
+CONTENU :
+- Mentionner que tu as repéré l'offre (titre court du poste) chez l'entreprise cible.
+- Une phrase sur le fait que tu as des profils Sales alignés / à proposer.
+- Proposition courte d'échange. Ton professionnel, direct.
+
+INTERDIT : confondre recruteur et client, inventer un prénom client différent de celui fourni.${extraInstructions ? `\n\nInstructions supplémentaires :\n${extraInstructions}` : ""}`;
+
+    const linkedinUserPayload = `Génère le message LinkedIn avec ces données factuelles :
+- Prénom du CLIENT (destinataire, à mettre après "Bonjour") : ${contactFirstName}
+- Nom complet client (référence) : ${contactName}
+- Entreprise : ${offer.companyName}
+- Poste à pourvoir (raccourcis si besoin) : ${offer.offerTitle || contactJobTitle || "poste Sales"}
+${linkedinSummary ? `- Résumé profil LinkedIn : ${linkedinSummary.slice(0, 400)}` : ""}`;
+
+    try {
+      let aiLinkedin = "";
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: linkedinSystemPrompt },
+            {
+              role: "user",
+              content:
+                attempt === 0
+                  ? linkedinUserPayload
+                  : `Le message précédent était trop long. Raccourcis-le pour qu'il fasse strictement moins de 300 caractères. Message actuel : "${aiLinkedin}"`,
+            },
+          ],
+          max_tokens: 120,
+          temperature: 0.5,
+        });
+        aiLinkedin = completion.choices[0]?.message?.content?.trim() || "";
+        if (aiLinkedin.length <= 300) break;
+      }
+      if (aiLinkedin.length > 300) aiLinkedin = aiLinkedin.substring(0, 297) + "…";
+
+      const [updated] = await db
+        .update(prospectContact)
+        .set({ aiMessageLinkedin: aiLinkedin, updatedAt: new Date() })
+        .where(eq(prospectContact.id, params.id))
+        .returning();
+
+      return json(updated);
+    } catch (err) {
+      console.error("LinkedIn message generation error:", err);
+      return json(
+        { error: err instanceof Error ? err.message : "Erreur lors de la génération" },
+        { status: 500 }
+      );
+    }
+  }
+
+  // ── WhatsApp / Email : web search hook + full template ───────────────────────
+  let companyHook = "";
+  try {
+    const searchResponse = await (openai as any).responses.create({
+      model: "gpt-4o-mini-search-preview",
+      tools: [{ type: "web_search_preview" }],
+      messages: [
+        {
+          role: "user",
+          content: `Fais une recherche rapide sur l'entreprise "${offer.companyName}" et son offre de recrutement pour un "${offer.offerTitle || "poste Sales"}".
+Trouve un élément concret et récent qui expliquerait POURQUOI ils recrutent maintenant :
+- Levée de fonds récente ?
+- Départ d'un collaborateur Sales notable ?
+- Croissance annoncée / expansion géographique ?
+- Contrat signé / nouveau marché ?
+Réponds en 1-2 phrases FACTUELLES et PRÉCISES que je pourrai glisser dans un email de prospection. Si tu ne trouves rien de concret, réponds juste "rien de trouvé".`,
+        },
+      ],
+    });
+    const hookText: string = searchResponse.output_text?.trim() || "";
+    if (hookText && hookText.toLowerCase() !== "rien de trouvé") {
+      companyHook = hookText;
+    }
+  } catch {
+    // Search not available or failed — continue without hook
+  }
+
+  // WhatsApp et email : même modèle de texte ; l'objet sert aussi pour réutiliser le corps sur WhatsApp (l'UI extrait le corps).
+  const longChannelInstructions =
+    "Message pour email OU WhatsApp : même contenu. Première ligne obligatoire : 'Objet: …' (accroche percutante). Saut de ligne, puis corps professionnel court : 6-8 lignes. Le corps (après l'objet) sera réutilisé tel quel pour WhatsApp.";
+
+  const systemPrompt = `Rôle : Tu es un chasseur de têtes spécialisé exclusivement dans les profils Sales. Style : partenaire d'affaires — direct, sobre, sans fioritures, extrêmement pragmatique. Tu écris pour ${recruiterName}.
 
 Contexte :
-- Contact : ${contactName}${contactJobTitle ? `, ${contactJobTitle}` : ""} chez ${offer.companyName}
-- Offre : ${offer.offerTitle || "poste non précisé"}
-${offer.offerContent ? `- Détail de l'offre : ${offer.offerContent.substring(0, 800)}` : ""}
-${linkedinSummary ? `- Profil LinkedIn du contact : ${linkedinSummary}` : ""}
-${pitch ? `- Pitch recruteur : ${pitch}` : ""}
+- Entreprise cible : ${offer.companyName}
+- Interlocuteur : ${contactName}${contactJobTitle ? `, ${contactJobTitle}` : ""} — prénom du client à utiliser après « Bonjour » : ${contactFirstName}
+- Poste ouvert : ${offer.offerTitle || "non précisé"}
+${offer.offerContent ? `- Description de l'offre : ${offer.offerContent.substring(0, 800)}` : ""}
+${linkedinSummary ? `- Profil LinkedIn : ${linkedinSummary}` : ""}
+${companyHook ? `- Contexte de recrutement trouvé (à utiliser comme hook d'accroche) : ${companyHook}` : ""}
 
-Paramètres de ciblage à déduire intelligemment de l'offre :
-- Profil type : expérience en années et type de vente précis (ex: 3-5 ans en vente B2B complexe)
-- Secteur d'origine : secteur exact où chercher ces profils (ex: Climate Tech, SaaS RH, Fintech)
-- Entreprises cibles : 3-4 vraies entreprises du même secteur/taille où ces profils Sales existent et où il faudrait sourcer
+Pitch recruteur :
+${pitch || `${recruiterName} — cabinet de recrutement spécialisé profils Sales.`}
 
-Ma proposition de valeur (à intégrer dans le message) :
-- Spécialisation : recrutement exclusif de profils Sales (BizDev, Account Executive, Head of Sales)
-- Méthode : outil de ciblage métier ultra-fin pour extraire les profils passés par ces entreprises cibles
-- Vitesse : première sélection qualifiée sous 72h
-- Modèle : zéro risque, pas d'abonnement, tarif au prix d'une cooptation interne, paiement uniquement si recrutement effectif
+Canal : ${longChannelInstructions}
 
-Canal : ${channelInstructions[channel] || channelInstructions.linkedin}
+Structure OBLIGATOIRE — reproduis EXACTEMENT ce modèle, mot pour mot, en ne changeant que les éléments entre crochets :
 
-Structure du message (email/whatsapp) :
-1. Accroche : référence directe à leur offre de [poste] chez [entreprise]
-2. Preuve de compréhension : citer les entreprises cibles où sourcer, avec le profil type recherché
-3. Solution : vitesse (72h) et précision de la méthode
-4. Offre financière : zéro risque, paiement au recrutement uniquement, tarif cooptation
-5. Appel à l'action : échange de 10 minutes cette semaine
-6. Signature : ${recruiterName} + lien en HTML : <a href="https://proxima-agents.com/">proxima-agents.com</a>
+Bonjour [prénom du contact],
 
-Ton : sobre, expert, partenaire de confiance. Pas de jargon "IA" ou "révolutionnaire". Court et percutant.${extraInstructions ? `\n\nInstructions supplémentaires (prioritaires) :\n${extraInstructions}` : ""}
+Je suis tombé sur votre offre de [intitulé du poste simplifié — titre principal uniquement, sans hashtags ni parenthèses] chez [entreprise].
 
-Rédige UNIQUEMENT le message final, sans introduction ni commentaire.`;
+[SI hook contextuel disponible : utilise-le en 1 phrase. SINON : "Corrigez-moi si je me trompe, mais si vous cherchez encore, c'est peut-être parce que comme souvent les profils reçus sont "bons sur le papier", mais peu vraiment alignés avec le cycle de vente."]
+
+De notre côté, on a pris le sujet à l'envers : on identifie à l'aide de notre moteur interne des profils déjà alignés avec votre cycle de vente, puis on valide avec eux leur intérêt avant même de vous les présenter.
+
+J'ai commencé à jeter un œil de mon côté, il y a déjà quelques profils qui pourraient bien coller.
+
+Je vous laisse regarder notre approche : ${channel === "email" ? '<a href="https://proxima-agents.com/">proxima-agents.com</a>' : "https://proxima-agents.com/"}
+
+Si ça vous parle, je peux vous envoyer une première shortlist dans la journée.
+[Prénom du recruteur — utiliser : ${recruiterFirstName}]
+
+RÈGLES STRICTES :
+- Ne modifier QUE : le prénom du contact (${contactFirstName}), le poste, l'entreprise, et la phrase d'accroche si hook disponible
+- Aucune mention d'expérience, de secteur, d'entreprises similaires, de prix ou de conditions
+- Aucune reformulation — les phrases sont FIGÉES mot pour mot
+- Pas de tirets "---" dans le message généré
+- Toujours commencer par "Bonjour [prénom],"${channel === "email" ? '\n- Conserver la balise <a href="https://proxima-agents.com/">proxima-agents.com</a> telle quelle dans le message' : ""}
+
+Objectif : que le prospect se dise "Ce recruteur sait exactement qui je cherche et ça ne me coûte rien d'essayer."${extraInstructions ? `\n\nInstructions supplémentaires (prioritaires) :\n${extraInstructions}` : ""}`;
 
   try {
-    const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: "Génère le message de prospection." },
       ],
-      max_tokens: channel === "email" ? 450 : 220,
-      temperature: 0.8,
+      max_tokens: 450,
+      temperature: 0.75,
     });
 
-    let aiMessage = completion.choices[0]?.message?.content?.trim() || "";
+    const aiMessage = completion.choices[0]?.message?.content?.trim() || "";
 
-    // Safety truncation for LinkedIn
-    if (channel === "linkedin" && aiMessage.length > 300) {
-      aiMessage = aiMessage.substring(0, 297) + "...";
-    }
-
-    // Save to DB
     const [updated] = await db
       .update(prospectContact)
-      .set({
-        aiMessage,
-        updatedAt: new Date(),
-      })
+      .set({ aiMessage, updatedAt: new Date() })
       .where(eq(prospectContact.id, params.id))
       .returning();
 
