@@ -42,7 +42,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
   }
 
   const userProfile = await db
-    .select({ name: user.name, company: user.company, unipileLinkedInAccountId: user.unipileLinkedInAccountId, unipileWhatsAppAccountId: user.unipileWhatsAppAccountId })
+    .select({ name: user.name, company: user.company, unipileLinkedInAccountId: user.unipileLinkedInAccountId, unipileWhatsAppAccountId: user.unipileWhatsAppAccountId, fullenrichApiKey: user.fullenrichApiKey })
     .from(user)
     .where(eq(user.id, locals.user.id))
     .limit(1);

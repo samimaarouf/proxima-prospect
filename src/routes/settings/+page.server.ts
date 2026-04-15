@@ -14,6 +14,7 @@ export const load: PageServerLoad = async ({ locals }) => {
       unipileWhatsAppAccountId: user.unipileWhatsAppAccountId,
       unipileAccountId: user.unipileAccountId,
       coresignalApiKey: user.coresignalApiKey,
+      fullenrichApiKey: user.fullenrichApiKey,
     })
     .from(user)
     .where(eq(user.id, locals.user.id))
@@ -50,6 +51,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     whatsappAccount,
     emailAccount,
     coresignalApiKey: profile?.coresignalApiKey ?? null,
+    fullenrichApiKey: profile?.fullenrichApiKey ?? null,
   };
 };
 
@@ -59,6 +61,14 @@ export const actions: Actions = {
     const formData = await request.formData();
     const key = (formData.get("key") as string | null)?.trim() || null;
     await db.update(user).set({ coresignalApiKey: key }).where(eq(user.id, locals.user.id));
+    return { success: true };
+  },
+
+  saveFullenrichKey: async ({ locals, request }) => {
+    if (!locals.user) throw redirect(302, "/login");
+    const formData = await request.formData();
+    const key = (formData.get("key") as string | null)?.trim() || null;
+    await db.update(user).set({ fullenrichApiKey: key }).where(eq(user.id, locals.user.id));
     return { success: true };
   },
 

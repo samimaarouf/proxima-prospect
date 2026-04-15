@@ -34,6 +34,7 @@
   let quickFilter = $state("");
 
   const isLinkedInEnabled = $derived(!!data.userProfile?.unipileLinkedInAccountId);
+  const isFullenrichEnabled = $derived(!!data.userProfile?.fullenrichApiKey);
 
   // Derived: offers enriched with contact count
   const offersWithCount = $derived(
@@ -534,6 +535,7 @@
     onContactDeleted={handleContactDeleted}
     onOfferScraped={(updated) => { updateOffer(updated); selectedOfferForSheet = { ...selectedOfferForSheet!, ...updated }; }}
     {isLinkedInEnabled}
+    fullenrichEnabled={isFullenrichEnabled}
   />
 {/if}
 

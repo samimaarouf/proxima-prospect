@@ -39,6 +39,7 @@
     onContactDeleted,
     onOfferScraped,
     isLinkedInEnabled = false,
+    fullenrichEnabled = false,
   }: {
     offer: Offer;
     contacts: Contact[];
@@ -49,6 +50,7 @@
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onOfferScraped?: (updated: any) => void;
     isLinkedInEnabled?: boolean;
+    fullenrichEnabled?: boolean;
   } = $props();
 
   type HistoryEntry = {
@@ -73,6 +75,7 @@
   let scraping = $state(false);
   let enrichingFor = $state<string | null>(null);
   let enrichingAll = $state(false);
+  let enrichingFullenrichFor = $state<string | null>(null);
   let isSending = $state(false);
   let sendProgress = $state({ current: 0, total: 0, success: 0, failed: 0 });
 
@@ -484,6 +487,24 @@
     enrichingFor = null;
     enrichingAll = false;
     toast.success(`${count} profil(s) LinkedIn enrichi(s) !`);
+  }
+
+  async function enrichFullenrich(contact: Contact) {
+    if (!contact.linkedinUrl) return;
+    enrichingFullenrichFor = contact.id;
+    try {
+      const res = await fetch(`/api/contacts/${contact.id}/enrich-fullenrich`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erreur");
+      onContactUpdated?.({ ...contact, ...data });
+      const { email, phone } = (data._enriched ?? {}) as { email?: string; phone?: string };
+      const found = [email && `email: ${email}`, phone && `tél: ${phone}`].filter(Boolean).join(", ");
+      toast.success(found ? `Coordonnées trouvées — ${found}` : "Coordonnées mises à jour");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur lors de l'enrichissement");
+    } finally {
+      enrichingFullenrichFor = null;
+    }
   }
 
   async function sendAllMessages() {
@@ -909,6 +930,22 @@
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                   {/if}
                   Enrichir
+                </button>
+              {/if}
+              {#if contact.linkedinUrl && fullenrichEnabled}
+                {@const isEnrichingFull = enrichingFullenrichFor === contact.id}
+                <button
+                  onclick={() => enrichFullenrich(contact)}
+                  disabled={isEnrichingFull}
+                  class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-emerald-200 text-emerald-700 rounded-md hover:bg-emerald-50 disabled:opacity-50 transition-colors"
+                  title="Trouver l'email et le téléphone via Fullenrich"
+                >
+                  {#if isEnrichingFull}
+                    <span class="w-3 h-3 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></span>
+                  {:else}
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  {/if}
+                  Email/Tél
                 </button>
               {/if}
               <button
