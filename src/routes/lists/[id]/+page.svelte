@@ -367,15 +367,20 @@
   }
 
   function updateContact(updated: Partial<Contact> & { id: string }) {
-    contacts = contacts.map((c) => c.id === updated.id ? { ...c, ...updated } : c);
-    // Rebuild contactsByOffer entry
+    const exists = contacts.some((c) => c.id === updated.id);
+    if (exists) {
+      contacts = contacts.map((c) => c.id === updated.id ? { ...c, ...updated } : c);
+    } else {
+      contacts = [...contacts, updated as Contact];
+    }
     const offerId = updated.offerId || contacts.find((c) => c.id === updated.id)?.offerId;
     if (offerId) {
+      const inOffer = (contactsByOffer[offerId] || []).some((c) => c.id === updated.id);
       contactsByOffer = {
         ...contactsByOffer,
-        [offerId]: (contactsByOffer[offerId] || []).map((c) =>
-          c.id === updated.id ? { ...c, ...updated } : c
-        ),
+        [offerId]: inOffer
+          ? (contactsByOffer[offerId] || []).map((c) => c.id === updated.id ? { ...c, ...updated } : c)
+          : [...(contactsByOffer[offerId] || []), updated as Contact],
       };
     }
   }

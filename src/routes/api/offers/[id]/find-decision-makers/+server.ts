@@ -37,31 +37,69 @@ function extractDomain(url: string | null): string | null {
   }
 }
 
+function cleanCompanyName(name: string): string {
+  return name.replace(/\s*\(.*?\)/g, "").trim();
+}
+
+function coresignalFetchOptions(extra?: RequestInit): RequestInit & { signal: AbortSignal } {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 15_000);
+  return { ...extra, signal: controller.signal };
+}
+
+function friendlyCoresignalError(status: number): string {
+  if (status === 504 || status === 502 || status === 503) {
+    return "Coresignal est temporairement indisponible (erreur " + status + "). Veuillez réessayer dans quelques minutes.";
+  }
+  if (status === 401 || status === 403) {
+    return "Clé API Coresignal invalide ou expirée. Vérifiez vos paramètres.";
+  }
+  if (status === 429) {
+    return "Limite de requêtes Coresignal atteinte. Attendez un moment avant de réessayer.";
+  }
+  return `Erreur Coresignal (${status}). Veuillez réessayer.`;
+}
+
 async function coresignalSearch(apiKey: string, query: object): Promise<number[]> {
-  const res = await fetch(
-    "https://api.coresignal.com/cdapi/v2/employee_multi_source/search/es_dsl",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: apiKey },
-      body: JSON.stringify({ query, sort: ["_score"] }),
+  let res: Response;
+  try {
+    res = await fetch(
+      "https://api.coresignal.com/cdapi/v2/employee_multi_source/search/es_dsl",
+      coresignalFetchOptions({
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: apiKey },
+        body: JSON.stringify({ query, sort: ["_score"] }),
+      })
+    );
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error("Coresignal n'a pas répondu dans les délais (timeout). Réessayez dans quelques instants.");
     }
-  );
+    throw e;
+  }
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Coresignal search ${res.status}: ${err}`);
+    throw new Error(friendlyCoresignalError(res.status));
   }
   const ids: number[] = await res.json();
   return ids;
 }
 
 async function coresignalCollect(apiKey: string, id: number): Promise<Record<string, unknown>> {
-  const res = await fetch(
-    `https://api.coresignal.com/cdapi/v2/employee_multi_source/collect/${id}`,
-    {
-      method: "GET",
-      headers: { "Content-Type": "application/json", apikey: apiKey },
+  let res: Response;
+  try {
+    res = await fetch(
+      `https://api.coresignal.com/cdapi/v2/employee_multi_source/collect/${id}`,
+      coresignalFetchOptions({
+        method: "GET",
+        headers: { "Content-Type": "application/json", apikey: apiKey },
+      })
+    );
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error(`Coresignal collect ${id}: timeout`);
     }
-  );
+    throw e;
+  }
   if (!res.ok) throw new Error(`Coresignal collect ${id}: ${res.status}`);
   return await res.json();
 }
@@ -86,50 +124,70 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!roles?.length) return json({ error: "Aucun rôle sélectionné" }, { status: 400 });
 
   const domain = extractDomain(offer.offerUrl);
+  const cleanedName = cleanCompanyName(offer.companyName);
+
+  console.log("[find-decision-makers] company:", offer.companyName, "→ cleaned:", cleanedName);
+  console.log("[find-decision-makers] domain:", domain);
+  console.log("[find-decision-makers] roles:", roles);
 
   // ── 1. Build ES query ──────────────────────────────────────────
-  const companyFilter = domain
-    ? {
-        nested: {
-          path: "experience",
-          query: {
-            bool: {
-              must: [
-                { term: { "experience.active_experience": 1 } },
-                { match: { "experience.company_website.domain_only": domain } },
-              ],
-            },
-          },
-        },
-      }
-    : {
-        nested: {
-          path: "experience",
-          query: {
-            bool: {
-              must: [
-                { term: { "experience.active_experience": 1 } },
-                { match: { "experience.company_name": offer.companyName } },
-              ],
-            },
-          },
-        },
-      };
+  // Company matching inside a nested experience block that requires active_experience=1
+  // Use match_phrase only (exact) — plain `match` tokenizes "Qevlar AI" → matches
+  // every company with "AI" in the name and floods results with irrelevant profiles.
+  // Domain match is kept as a precise fallback for companies indexed by website.
+  const companyShould: object[] = [
+    { match_phrase: { "experience.company_name": cleanedName } },
+  ];
+
+  if (domain) {
+    companyShould.push({ match: { "experience.company_website.domain_only": domain } });
+  }
+
+  // Role keywords boost — lifts decision-makers to the top of results (not a hard filter)
+  const allRoleKeywords = roles.flatMap((r) => _ROLE_CATEGORIES[r].keywords);
+  const titleBoost = {
+    bool: {
+      should: allRoleKeywords.map((kw) => ({
+        match: { active_experience_title: kw },
+      })),
+    },
+  };
 
   const esQuery = {
     bool: {
-      must: [companyFilter],
+      must: [
+        { term: { is_deleted: 0 } },
+        { term: { is_working: 1 } },
+        {
+          nested: {
+            path: "experience",
+            query: {
+              bool: {
+                must: [
+                  { term: { "experience.active_experience": 1 } },
+                  { bool: { should: companyShould, minimum_should_match: 1 } },
+                ],
+              },
+            },
+          },
+        },
+      ],
+      should: [titleBoost],
     },
   };
+
+  console.log("[find-decision-makers] esQuery:", JSON.stringify(esQuery, null, 2));
 
   // ── 2. Search → get IDs ────────────────────────────────────────
   let ids: number[] = [];
   try {
     ids = await coresignalSearch(profile.coresignalApiKey, esQuery);
   } catch (err) {
-    console.error("Coresignal search failed:", err);
+    console.error("[find-decision-makers] search failed:", err);
     return json({ error: String(err) }, { status: 502 });
   }
+
+  console.log("[find-decision-makers] ids returned:", ids.length, ids.slice(0, 5));
 
   if (!ids.length) return json({ candidates: [] });
 
@@ -140,9 +198,10 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const employees: Array<{
     full_name?: string;
     active_experience_title?: string;
-    professional_network_url?: string;
+    linkedin_url?: string;
     primary_professional_email?: string;
     location_full?: string;
+    picture_url?: string;
   }> = [];
 
   await Promise.allSettled(
@@ -150,11 +209,18 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       try {
         const data = await coresignalCollect(profile.coresignalApiKey!, id);
         employees.push(data as typeof employees[0]);
-      } catch { /* skip failed collects */ }
+      } catch (err) {
+        console.warn("[find-decision-makers] collect failed for id", id, err);
+      }
     })
   );
 
-  if (!employees.length) return json({ candidates: [] });
+  console.log("[find-decision-makers] collected:", employees.length, "employees");
+
+  if (!employees.length) {
+    console.log("[find-decision-makers] 0 employees collected → returning empty");
+    return json({ candidates: [] });
+  }
 
   // ── 4. AI classification ──────────────────────────────────────
   const selectedCategories = roles.map((r) => ({
@@ -166,6 +232,9 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const validEmployees = employees.filter(
     (e) => e.full_name && e.active_experience_title
   );
+
+  console.log("[find-decision-makers] validEmployees (name+title):", validEmployees.length);
+  console.log("[find-decision-makers] sample:", validEmployees.slice(0, 5).map((e) => `${e.full_name} — ${e.active_experience_title}`));
 
   const employeeList = validEmployees
     .map((e, i) => `${i + 1}. ${e.full_name} — "${e.active_experience_title}"`)
@@ -191,9 +260,12 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       response_format: { type: "json_object" },
       max_tokens: 200,
     });
-    const parsed = JSON.parse(completion.choices[0].message.content ?? "{}");
+    const raw = completion.choices[0].message.content ?? "{}";
+    console.log("[find-decision-makers] GPT response:", raw);
+    const parsed = JSON.parse(raw);
     matchIndices = (parsed.matches ?? []).filter((n: unknown) => typeof n === "number");
-  } catch {
+  } catch (err) {
+    console.warn("[find-decision-makers] GPT failed, falling back to keyword match:", err);
     // Fallback: keyword matching
     const allKeywords = selectedCategories.flatMap((c) =>
       c.keywords.map((k) => k.toLowerCase())
@@ -206,6 +278,8 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       .filter((n): n is number => n !== null);
   }
 
+  console.log("[find-decision-makers] matchIndices:", matchIndices);
+
   // ── 5. Build response ─────────────────────────────────────────
   const candidates = matchIndices
     .map((idx) => validEmployees[idx - 1])
@@ -213,9 +287,10 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     .map((e) => ({
       fullName: e.full_name,
       jobTitle: e.active_experience_title,
-      linkedinUrl: e.professional_network_url || null,
+      linkedinUrl: e.linkedin_url || null,
       email: e.primary_professional_email || null,
       location: e.location_full || null,
+      pictureUrl: e.picture_url || null,
     }));
 
   return json({ candidates });

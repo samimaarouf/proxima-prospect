@@ -4,7 +4,7 @@ import { auth } from "$lib/auth";
 import { svelteKitHandler } from "better-auth/svelte-kit";
 import { building } from "$app/environment";
 
-const publicRoutes = ["/login"];
+const publicRoutes = ["/login", "/api/inngest"];
 
 export const handle: Handle = async ({ event, resolve }) => {
   const { url } = event;

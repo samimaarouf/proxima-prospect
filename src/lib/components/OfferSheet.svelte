@@ -191,6 +191,8 @@
     dmAdding = true;
     try {
       const toAdd = dmCandidates.filter((_, i) => dmSelectedCandidates.has(i));
+      const added: Contact[] = [];
+
       for (const c of toAdd) {
         const res = await fetch(`/api/offers/${offer.id}/add-contact`, {
           method: "POST",
@@ -205,11 +207,30 @@
         if (res.ok) {
           const newContact = await res.json();
           onContactUpdated?.(newContact);
+          added.push(newContact);
         }
       }
-      toast.success(`${toAdd.length} décisionnaire(s) ajouté(s) !`);
+
+      toast.success(`${added.length} décisionnaire(s) ajouté(s) !`);
       showDmModal = false;
       dmStep = "select";
+
+      // Auto-enrich LinkedIn profiles if LinkedIn is connected
+      const toEnrich = added.filter((c) => c.linkedinUrl);
+      if (toEnrich.length > 0 && isLinkedInEnabled) {
+        toast.info(`Enrichissement LinkedIn de ${toEnrich.length} profil(s)…`);
+        for (const c of toEnrich) {
+          try {
+            const enrichRes = await fetch(`/api/contacts/${c.id}/enrich-linkedin`, { method: "POST" });
+            if (enrichRes.ok) {
+              const updated = await enrichRes.json();
+              onContactUpdated?.({ ...c, ...updated });
+            }
+          } catch { /* continue */ }
+          await new Promise((r) => setTimeout(r, 800));
+        }
+        toast.success("Enrichissement LinkedIn terminé !");
+      }
     } catch {
       toast.error("Erreur lors de l'ajout des contacts");
     } finally {
@@ -489,21 +510,50 @@
     toast.success(`${count} profil(s) LinkedIn enrichi(s) !`);
   }
 
-  async function enrichFullenrich(contact: Contact) {
-    if (!contact.linkedinUrl) return;
+  let enrichingFullenrichField = $state<Record<string, "email" | "phone">>({});
+
+  async function enrichFullenrich(contact: Contact, field: "email" | "phone") {
     enrichingFullenrichFor = contact.id;
+    enrichingFullenrichField = { ...enrichingFullenrichField, [contact.id]: field };
     try {
-      const res = await fetch(`/api/contacts/${contact.id}/enrich-fullenrich`, { method: "POST" });
+      // Trigger background Inngest job — returns immediately
+      const res = await fetch(`/api/contacts/${contact.id}/enrich-fullenrich`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ field }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erreur");
-      onContactUpdated?.({ ...contact, ...data });
-      const { email, phone } = (data._enriched ?? {}) as { email?: string; phone?: string };
-      const found = [email && `email: ${email}`, phone && `tél: ${phone}`].filter(Boolean).join(", ");
-      toast.success(found ? `Coordonnées trouvées — ${found}` : "Coordonnées mises à jour");
+
+      toast.info(field === "email" ? "Recherche d'email en cours…" : "Recherche de téléphone en cours…");
+
+      // Poll status endpoint until the contact is updated (max ~2.5 min)
+      const snapshotAt = new Date(contact.updatedAt ?? 0).getTime();
+      let found = false;
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 5000));
+        try {
+          const statusRes = await fetch(`/api/contacts/${contact.id}/enrich-fullenrich/status`);
+          if (!statusRes.ok) continue;
+          const status = await statusRes.json() as { email?: string | null; phone1?: string | null; updatedAt?: string };
+          const updatedAt = new Date(status.updatedAt ?? 0).getTime();
+          if (updatedAt > snapshotAt) {
+            onContactUpdated?.({ ...contact, email: status.email, phone1: status.phone1, updatedAt: status.updatedAt });
+            if (field === "email") toast.success(status.email ? `Email trouvé — ${status.email}` : "Aucun email trouvé");
+            else toast.success(status.phone1 ? `Téléphone trouvé — ${status.phone1}` : "Aucun téléphone trouvé");
+            found = true;
+            break;
+          }
+        } catch { /* continue polling */ }
+      }
+      if (!found) toast.warning("L'enrichissement prend plus de temps que prévu. Vérifiez plus tard.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur lors de l'enrichissement");
     } finally {
       enrichingFullenrichFor = null;
+      const next = { ...enrichingFullenrichField };
+      delete next[contact.id];
+      enrichingFullenrichField = next;
     }
   }
 
@@ -932,20 +982,34 @@
                   Enrichir
                 </button>
               {/if}
-              {#if contact.linkedinUrl && fullenrichEnabled}
+              {#if fullenrichEnabled && (contact.linkedinUrl || contact.fullName)}
                 {@const isEnrichingFull = enrichingFullenrichFor === contact.id}
+                {@const enrichingField = enrichingFullenrichField[contact.id]}
                 <button
-                  onclick={() => enrichFullenrich(contact)}
+                  onclick={() => enrichFullenrich(contact, "email")}
                   disabled={isEnrichingFull}
                   class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-emerald-200 text-emerald-700 rounded-md hover:bg-emerald-50 disabled:opacity-50 transition-colors"
-                  title="Trouver l'email et le téléphone via Fullenrich"
+                  title="Trouver l'email via Fullenrich"
                 >
-                  {#if isEnrichingFull}
+                  {#if isEnrichingFull && enrichingField === "email"}
                     <span class="w-3 h-3 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></span>
                   {:else}
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
                   {/if}
-                  Email/Tél
+                  Email
+                </button>
+                <button
+                  onclick={() => enrichFullenrich(contact, "phone")}
+                  disabled={isEnrichingFull}
+                  class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-emerald-200 text-emerald-700 rounded-md hover:bg-emerald-50 disabled:opacity-50 transition-colors"
+                  title="Trouver le téléphone via Fullenrich"
+                >
+                  {#if isEnrichingFull && enrichingField === "phone"}
+                    <span class="w-3 h-3 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></span>
+                  {:else}
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                  {/if}
+                  Tél
                 </button>
               {/if}
               <button
@@ -1329,14 +1393,24 @@
             <div class="space-y-2">
               {#each dmCandidates as candidate, i}
                 {@const isSelected = dmSelectedCandidates.has(i)}
-                <button
-                  type="button"
+                <div
+                  role="checkbox"
+                  aria-checked={isSelected}
+                  tabindex="0"
                   onclick={() => {
                     const next = new Set(dmSelectedCandidates);
                     if (next.has(i)) next.delete(i); else next.add(i);
                     dmSelectedCandidates = next;
                   }}
-                  class="w-full flex items-start gap-3 p-3 rounded-xl border-2 text-left transition-all {isSelected ? 'border-indigo-400 bg-indigo-50' : 'border-border hover:border-indigo-200'}"
+                  onkeydown={(e) => {
+                    if (e.key === " " || e.key === "Enter") {
+                      e.preventDefault();
+                      const next = new Set(dmSelectedCandidates);
+                      if (next.has(i)) next.delete(i); else next.add(i);
+                      dmSelectedCandidates = next;
+                    }
+                  }}
+                  class="w-full flex items-start gap-3 p-3 rounded-xl border-2 text-left transition-all cursor-pointer {isSelected ? 'border-indigo-400 bg-indigo-50' : 'border-border hover:border-indigo-200'}"
                 >
                   <!-- Checkbox -->
                   <div class="mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 {isSelected ? 'border-indigo-500 bg-indigo-500' : 'border-muted-foreground/40'}">
@@ -1357,17 +1431,21 @@
                     {/if}
                   </div>
                   <!-- LinkedIn link -->
-                  <a
-                    href={candidate.linkedinUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onclick={(e) => e.stopPropagation()}
-                    class="p-1.5 rounded-md hover:bg-blue-100 transition-colors flex-shrink-0 mt-0.5"
-                    title="Voir sur LinkedIn"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="#0a66c2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-                  </a>
-                </button>
+                  {#if candidate.linkedinUrl}
+                    <a
+                      href={candidate.linkedinUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onclick={(e) => e.stopPropagation()}
+                      class="p-1.5 rounded-md hover:bg-blue-100 transition-colors flex-shrink-0 mt-0.5"
+                      title="Voir sur LinkedIn"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="#0a66c2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                    </a>
+                  {:else}
+                    <div class="w-7 h-7 flex-shrink-0"></div>
+                  {/if}
+                </div>
               {/each}
             </div>
           {/if}
