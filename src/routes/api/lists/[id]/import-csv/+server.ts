@@ -4,45 +4,53 @@ import { prospectList, prospectOffer, prospectContact } from "$lib/server/db/sch
 import { eq, and } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
 
-// Parse a semicolon-separated CSV with quoted values
+// Parse CSV properly handling multi-line quoted fields and auto-detecting separator
 function parseCsv(text: string): Record<string, string>[] {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
-  const headers = splitCsvLine(lines[0]);
-  return lines.slice(1).map((line) => {
-    const values = splitCsvLine(line);
-    const row: Record<string, string> = {};
-    headers.forEach((h, i) => {
-      row[h.trim()] = (values[i] ?? "").trim();
-    });
-    return row;
-  });
-}
-
-function splitCsvLine(line: string): string[] {
-  const result: string[] = [];
-  let current = "";
+  // Tokenize the entire file character by character so quoted newlines are preserved
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = "";
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
+  for (let i = 0; i < normalized.length; i++) {
+    const ch = normalized[i];
     if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
+      if (inQuotes && normalized[i + 1] === '"') {
+        currentField += '"';
         i++;
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (ch === ";" && !inQuotes) {
-      result.push(current);
-      current = "";
+    } else if (!inQuotes && (ch === "," || ch === ";")) {
+      currentRow.push(currentField);
+      currentField = "";
+    } else if (!inQuotes && ch === "\n") {
+      currentRow.push(currentField);
+      currentField = "";
+      if (currentRow.some((f) => f.trim())) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
     } else {
-      current += ch;
+      currentField += ch;
     }
   }
-  result.push(current);
-  return result;
+  // Push last field/row
+  currentRow.push(currentField);
+  if (currentRow.some((f) => f.trim())) rows.push(currentRow);
+
+  if (rows.length < 2) return [];
+
+  const headers = rows[0].map((h) => h.trim());
+  return rows.slice(1).map((values) => {
+    const row: Record<string, string> = {};
+    headers.forEach((h, i) => {
+      row[h] = (values[i] ?? "").trim();
+    });
+    return row;
+  });
 }
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {
@@ -71,10 +79,10 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
   for (const row of rows) {
     const companyName = row["Entreprise"] || row["Company"] || "";
-    const offerTitle = row["Exemple d'offre"] || row["Offre"] || "";
-    const offerUrl = row["Domaine"] || row["Domain"] || null;
+    const offerTitle = row["Exemple d'offre"] || row["Offre"] || row["Intitulé du poste"] || "";
+    const offerUrl = row["URL offre"] || row["Domaine"] || row["Domain"] || null;
     const linkedinCeo = row["LinkedIn CEO/Fondateur"] || row["LinkedIn"] || "";
-    const localisation = row["Localisation"] || null;
+    const localisation = row["Localisation"] || row["Ville"] || null;
 
     if (!companyName) { skipped++; continue; }
 
