@@ -270,6 +270,8 @@
   // Import + auto-enrich + auto-scrape
   // ===========================
   const isCsvFile = $derived(importFile ? importFile.name.toLowerCase().endsWith(".csv") : false);
+  // "contacts" = CSV export format (Nom;Prénom;LinkedIn…), "calibre" = one row per offer, null = xlsx
+  let csvFormat = $state<"contacts" | "calibre" | null>(null);
 
   async function handleImport() {
     if (!importFile) { toast.error("Sélectionnez un fichier"); return; }
@@ -277,15 +279,25 @@
     const formData = new FormData();
     formData.append("file", importFile);
     try {
-      const endpoint = isCsvFile
-        ? `/api/lists/${list.id}/import-csv`
-        : `/api/lists/${list.id}/import`;
+      let endpoint: string;
+      let successMsg: string;
+      if (csvFormat === "contacts") {
+        endpoint = `/api/lists/${list.id}/import-contacts`;
+      } else if (isCsvFile) {
+        endpoint = `/api/lists/${list.id}/import-csv`;
+      } else {
+        endpoint = `/api/lists/${list.id}/import`;
+      }
       const res = await fetch(endpoint, { method: "POST", body: formData });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Erreur");
       const result = await res.json();
-      const successMsg = isCsvFile
-        ? `Import CSV terminé : ${result.imported} offre(s) importée(s)`
-        : `Import terminé : ${result.contactsCreated} contacts, ${result.offersCreated} offre(s)`;
+      if (csvFormat === "contacts") {
+        successMsg = `Import terminé : ${result.updated} contact(s) mis à jour${result.notFound > 0 ? `, ${result.notFound} non trouvé(s)` : ""}`;
+      } else if (isCsvFile) {
+        successMsg = `Import CSV terminé : ${result.imported} offre(s) importée(s)`;
+      } else {
+        successMsg = `Import terminé : ${result.contactsCreated} contacts, ${result.offersCreated} offre(s)`;
+      }
       toast.success(successMsg);
 
       // Reload data
@@ -301,6 +313,7 @@
 
       showImportDialog = false;
       importFile = null;
+      csvFormat = null;
 
       // Auto-scrape offers that have a URL but no title
       const toScrape = (listData.offers || offers).filter(
@@ -400,13 +413,26 @@
     }
   }
 
-  function handleFileInput(e: Event) {
+  async function handleFileInput(e: Event) {
     importFile = (e.target as HTMLInputElement).files?.[0] || null;
+    csvFormat = null;
+    if (importFile?.name.toLowerCase().endsWith(".csv")) {
+      // Read first line to detect format
+      const slice = await importFile.slice(0, 200).text();
+      const firstLine = slice.replace(/\uFEFF/, "").split(/\r?\n/)[0] ?? "";
+      // Contact CSV has "Nom" and "LinkedIn" columns
+      if (firstLine.includes("Nom") && firstLine.includes("LinkedIn")) {
+        csvFormat = "contacts";
+      } else {
+        csvFormat = "calibre";
+      }
+    }
   }
 
   function handleExport() {
     window.location.href = `/api/lists/${list.id}/export`;
   }
+
 
   function delay(ms: number) {
     return new Promise((r) => setTimeout(r, ms));
@@ -548,8 +574,8 @@
 {#if showImportDialog}
   <div
     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-    onclick={(e) => { if (e.target === e.currentTarget) { showImportDialog = false; importFile = null; } }}
-    onkeydown={(e) => { if (e.key === "Escape") { showImportDialog = false; importFile = null; } }}
+    onclick={(e) => { if (e.target === e.currentTarget) { showImportDialog = false; importFile = null; csvFormat = null; } }}
+    onkeydown={(e) => { if (e.key === "Escape") { showImportDialog = false; importFile = null; csvFormat = null; } }}
     role="dialog"
     aria-modal="true"
     tabindex="-1"
@@ -559,9 +585,14 @@
 
       {#if !importFile}
         <p class="text-sm text-muted-foreground">
-          Sélectionnez un fichier <strong>.csv</strong> (export calibre) ou <strong>.xlsx</strong> (format Excel).
+          Sélectionnez un fichier <strong>.csv</strong> (export contacts ou calibre) ou <strong>.xlsx</strong> (format Excel).
         </p>
-      {:else if isCsvFile}
+      {:else if csvFormat === "contacts"}
+        <div class="text-sm text-green-700 bg-green-50 border border-green-100 rounded-lg p-3 space-y-1">
+          <p class="font-medium">Format contacts détecté</p>
+          <p class="text-xs text-green-600">Met à jour les contacts existants : Nom, Prénom, LinkedIn, Email 1, Email 2, Tél 1, Tél 2.</p>
+        </div>
+      {:else if csvFormat === "calibre"}
         <div class="text-sm text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg p-3 space-y-1">
           <p class="font-medium">Format CSV calibre détecté</p>
           <p class="text-xs text-indigo-600">Une ligne = une offre + un décisionnaire (CEO/Fondateur). L'enrichissement LinkedIn se lancera automatiquement.</p>
@@ -593,7 +624,7 @@
 
       <div class="flex gap-3 justify-end">
         <button
-          onclick={() => { showImportDialog = false; importFile = null; }}
+          onclick={() => { showImportDialog = false; importFile = null; csvFormat = null; }}
           class="px-4 py-2 text-sm border border-input rounded-md hover:bg-accent transition-colors"
         >
           Annuler
@@ -609,6 +640,7 @@
     </div>
   </div>
 {/if}
+
 
 <style>
   .main-layout {

@@ -53,14 +53,14 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     contactsByOffer.get(c.offerId)!.push(c);
   }
 
-  const headers = ["Entreprise", "Offre", "Localisation", "Nom du décisionnaire", "Titre", "LinkedIn", "Email", "Téléphone 1", "Téléphone 2"];
+  const headers = ["Entreprise", "Offre", "Localisation", "Nom du décisionnaire", "Titre", "LinkedIn", "Email 1", "Email 2", "Téléphone 1", "Téléphone 2"];
   const rows: string[][] = [headers];
 
   for (const offer of offers) {
     const offerContacts = contactsByOffer.get(offer.id) ?? [];
 
     if (offerContacts.length === 0) {
-      rows.push([offer.companyName, offer.offerTitle ?? "", offer.offerLocation ?? "", "", "", "", "", "", ""]);
+      rows.push([offer.companyName, offer.offerTitle ?? "", offer.offerLocation ?? "", "", "", "", "", "", "", ""]);
     } else {
       for (const contact of offerContacts) {
         rows.push([
@@ -71,6 +71,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
           contact.jobTitle ?? "",
           contact.linkedinUrl ?? "",
           contact.email ?? "",
+          contact.email2 ?? "",
           contact.phone1 ?? "",
           contact.phone2 ?? "",
         ]);
@@ -78,7 +79,9 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     }
   }
 
-  const csvContent = rows.map((row) => row.map(escapeCsv).join(";")).join("\r\n");
+  // UTF-8 BOM so Excel opens accents correctly
+  const bom = "\uFEFF";
+  const csvContent = bom + rows.map((row) => row.map(escapeCsv).join(";")).join("\r\n");
   const filename = `export_${listName.replace(/[^a-z0-9]/gi, "_")}.csv`;
 
   return new Response(csvContent, {

@@ -110,6 +110,7 @@ export const prospectContact = pgTable("prospect_contact", {
   phone1: text("phone1"),
   phone2: text("phone2"),
   email: text("email"),
+  email2: text("email2"),
   lastContactDate: text("last_contact_date"),
   touchCount: text("touch_count"),
   lastAction: text("last_action"),

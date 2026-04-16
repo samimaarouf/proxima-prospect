@@ -8,6 +8,13 @@
       "when": 1773332943530,
       "tag": "0000_fixed_zemo",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776329445560,
+      "tag": "0001_add_email2_to_contact",
+      "breakpoints": true
     }
   ]
 }
