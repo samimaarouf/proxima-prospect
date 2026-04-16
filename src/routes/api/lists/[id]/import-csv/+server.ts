@@ -98,17 +98,19 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       })
       .returning();
 
-    // Create the CEO/Fondateur contact if a valid LinkedIn URL is present
+    // Create the CEO/Fondateur contact only if a valid LinkedIn URL is present
     const linkedinUrl =
       linkedinCeo && linkedinCeo !== "Not Found" && linkedinCeo.startsWith("http")
         ? linkedinCeo
         : null;
 
-    await db.insert(prospectContact).values({
-      offerId: offer.id,
-      linkedinUrl,
-      contactStatus: "to_contact",
-    });
+    if (linkedinUrl) {
+      await db.insert(prospectContact).values({
+        offerId: offer.id,
+        linkedinUrl,
+        contactStatus: "to_contact",
+      });
+    }
 
     imported++;
   }

@@ -29,6 +29,7 @@
     notes: string | null;
     companyName: string;
     offerUrl: string | null;
+    updatedAt?: string | null;
   };
 
   let {
@@ -38,6 +39,7 @@
     onContactUpdated,
     onContactDeleted,
     onOfferScraped,
+    onOfferDeleted,
     isLinkedInEnabled = false,
     fullenrichEnabled = false,
   }: {
@@ -49,6 +51,7 @@
     onContactDeleted?: (contactId: string) => void;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onOfferScraped?: (updated: any) => void;
+    onOfferDeleted?: (offerId: string) => void;
     isLinkedInEnabled?: boolean;
     fullenrichEnabled?: boolean;
   } = $props();
@@ -76,6 +79,48 @@
   let enrichingFor = $state<string | null>(null);
   let enrichingAll = $state(false);
   let enrichingFullenrichFor = $state<string | null>(null);
+
+  // Manual contact add
+  let showAddContactInput = $state(false);
+  let addContactUrl = $state("");
+  let addingContact = $state(false);
+
+  async function handleAddContactManually() {
+    const url = addContactUrl.trim();
+    if (!url) return;
+    addingContact = true;
+    try {
+      const res = await fetch(`/api/offers/${offer.id}/add-contact`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ linkedinUrl: url }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Erreur");
+      const newContact = await res.json();
+      onContactUpdated?.(newContact);
+      addContactUrl = "";
+      showAddContactInput = false;
+      toast.success("Contact ajouté !");
+
+      if (isLinkedInEnabled) {
+        enrichingFor = newContact.id;
+        try {
+          const enrichRes = await fetch(`/api/contacts/${newContact.id}/enrich-linkedin`, { method: "POST" });
+          if (enrichRes.ok) {
+            const enriched = await enrichRes.json();
+            onContactUpdated?.({ ...newContact, ...enriched });
+            toast.success(`Profil enrichi : ${enriched.fullName || url}`);
+          }
+        } catch { /* silent */ } finally {
+          enrichingFor = null;
+        }
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      addingContact = false;
+    }
+  }
   let isSending = $state(false);
   let sendProgress = $state({ current: 0, total: 0, success: 0, failed: 0 });
 
@@ -691,6 +736,21 @@
       if (!res.ok) throw new Error();
       const updated = await res.json();
       onContactUpdated?.({ ...contact, ...updated });
+
+      // Auto-enrich via Unipile when a LinkedIn URL is saved
+      if (field === "linkedinUrl" && trimmed && isLinkedInEnabled) {
+        enrichingFor = contact.id;
+        try {
+          const enrichRes = await fetch(`/api/contacts/${contact.id}/enrich-linkedin`, { method: "POST" });
+          if (enrichRes.ok) {
+            const enriched = await enrichRes.json();
+            onContactUpdated?.({ ...contact, ...updated, ...enriched });
+            toast.success(`Profil enrichi : ${enriched.fullName || trimmed}`);
+          }
+        } catch { /* silent */ } finally {
+          enrichingFor = null;
+        }
+      }
     } catch {
       toast.error("Erreur lors de la sauvegarde");
     }
@@ -776,16 +836,30 @@
         {/if}
       </div>
     </div>
-    <button
-      onclick={onClose}
-      aria-label="Fermer"
-      class="ml-4 p-2 rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    </button>
+    <div class="flex items-center gap-1 ml-4 flex-shrink-0">
+      {#if onOfferDeleted}
+        <button
+          onclick={() => onOfferDeleted!(offer.id)}
+          aria-label="Supprimer l'offre"
+          title="Supprimer l'offre"
+          class="p-2 rounded-md hover:bg-red-50 transition-colors text-red-400 hover:text-red-600"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+          </svg>
+        </button>
+      {/if}
+      <button
+        onclick={onClose}
+        aria-label="Fermer"
+        class="p-2 rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
   </div>
 
   <!-- LinkedIn enrich bar (shown when some contacts need enriching) -->
@@ -842,6 +916,15 @@
     </button>
 
     <button
+      onclick={() => (showAddContactInput = !showAddContactInput)}
+      class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs border border-indigo-200 text-indigo-600 rounded-md hover:bg-indigo-50 transition-colors"
+      title="Ajouter un contact manuellement via son URL LinkedIn"
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Ajouter
+    </button>
+
+    <button
       onclick={generateAllMessages}
       disabled={generatingAll || contacts.length === 0}
       class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors"
@@ -856,11 +939,45 @@
     </button>
   </div>
 
+  <!-- Manual add contact -->
+  {#if showAddContactInput}
+    <div class="px-6 pb-3 flex gap-2">
+      <input
+        type="text"
+        bind:value={addContactUrl}
+        placeholder="https://linkedin.com/in/…"
+        class="flex-1 px-3 py-1.5 text-sm border border-indigo-300 rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-indigo-400 font-mono"
+        onkeydown={(e) => {
+          if (e.key === "Enter") handleAddContactManually();
+          if (e.key === "Escape") { showAddContactInput = false; addContactUrl = ""; }
+        }}
+      />
+      <button
+        onclick={handleAddContactManually}
+        disabled={addingContact || !addContactUrl.trim()}
+        class="px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors shrink-0"
+      >
+        {addingContact ? "…" : "Ajouter"}
+      </button>
+      <button
+        onclick={() => { showAddContactInput = false; addContactUrl = ""; }}
+        class="px-2 py-1.5 text-sm border border-input rounded-md hover:bg-accent transition-colors"
+      >✕</button>
+    </div>
+  {/if}
+
   <!-- Contacts list -->
   <div class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
     {#if contacts.length === 0}
       <div class="flex flex-col items-center justify-center h-48 text-muted-foreground text-sm">
         <p>Aucun contact pour cette offre</p>
+        <button
+          onclick={() => (showAddContactInput = true)}
+          class="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs border border-indigo-200 text-indigo-600 rounded-md hover:bg-indigo-50 transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Ajouter un contact LinkedIn
+        </button>
       </div>
     {:else}
       {#each contacts as contact (contact.id)}

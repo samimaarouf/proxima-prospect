@@ -29,24 +29,77 @@
 
   let connecting = $state<string | null>(null);
 
-  // Coresignal API key
-  let coresignalKey = $state(data.coresignalApiKey ?? "");
-  let savingKey = $state(false);
+  // Coresignal multi-keys
+  type CoresignalKey = { id: string; label: string | null; apiKeyMasked: string; isActive: boolean; lastUsedAt: string | null; order: number };
+  let coresignalKeys = $state<CoresignalKey[]>([]);
+  let loadingKeys = $state(false);
+  let newKeyValue = $state("");
+  let newKeyLabel = $state("");
+  let addingKey = $state(false);
 
-  async function saveCoresignalKey() {
-    savingKey = true;
+  async function loadCoresignalKeys() {
+    loadingKeys = true;
     try {
-      const fd = new FormData();
-      fd.append("key", coresignalKey);
-      const res = await fetch("?/saveApiKey", { method: "POST", body: fd });
-      if (!res.ok) throw new Error("Erreur");
-      toast.success("Clé Coresignal sauvegardée !");
-    } catch {
-      toast.error("Impossible de sauvegarder la clé.");
-    } finally {
-      savingKey = false;
+      const res = await fetch("/api/settings/coresignal-keys");
+      if (res.ok) coresignalKeys = await res.json();
+    } catch { /* silent */ } finally {
+      loadingKeys = false;
     }
   }
+
+  async function addCoresignalKey() {
+    if (!newKeyValue.trim()) return;
+    addingKey = true;
+    try {
+      const res = await fetch("/api/settings/coresignal-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: newKeyValue.trim(), label: newKeyLabel.trim() || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erreur");
+      coresignalKeys = [...coresignalKeys, data];
+      newKeyValue = "";
+      newKeyLabel = "";
+      toast.success("Clé ajoutée !");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      addingKey = false;
+    }
+  }
+
+  async function deleteCoresignalKey(id: string) {
+    try {
+      const res = await fetch("/api/settings/coresignal-keys", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      if (!res.ok) throw new Error();
+      coresignalKeys = coresignalKeys.filter((k) => k.id !== id);
+      toast.success("Clé supprimée");
+    } catch {
+      toast.error("Erreur lors de la suppression");
+    }
+  }
+
+  async function toggleCoresignalKey(key: CoresignalKey) {
+    try {
+      const res = await fetch("/api/settings/coresignal-keys", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: key.id, isActive: !key.isActive }),
+      });
+      const updated = await res.json();
+      if (!res.ok) throw new Error();
+      coresignalKeys = coresignalKeys.map((k) => k.id === key.id ? updated : k);
+    } catch {
+      toast.error("Erreur");
+    }
+  }
+
+  $effect(() => { loadCoresignalKeys(); });
 
   // Fullenrich API key
   let fullenrichKey = $state(data.fullenrichApiKey ?? "");
@@ -217,56 +270,94 @@
     <div>
       <h2 class="text-2xl font-bold">Coresignal</h2>
       <p class="text-sm text-muted-foreground mt-1">
-        Clé API pour la recherche de décisionnaires. Obtenez-la sur <a href="https://coresignal.com" target="_blank" class="underline hover:text-foreground">coresignal.com</a>.
+        Clés API pour la recherche de décisionnaires. Ajoutez plusieurs clés — elles s'enchaînent automatiquement quand l'une est épuisée. Obtenez-les sur <a href="https://coresignal.com" target="_blank" class="underline hover:text-foreground">coresignal.com</a>.
       </p>
     </div>
 
     <div class="border border-border rounded-xl bg-card p-5 space-y-4">
-      <div class="flex items-center gap-3">
-        <!-- Icon -->
-        <div class="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        </div>
-        <div class="flex-1 min-w-0">
-          <p class="font-semibold text-sm">API Key</p>
-          <p class="text-xs text-muted-foreground">Utilisée pour retrouver les décisionnaires d'une entreprise</p>
-        </div>
-        {#if data.coresignalApiKey}
-          <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium shrink-0">
-            <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-            Configurée
-          </span>
-        {:else}
-          <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0">
-            <span class="w-1.5 h-1.5 rounded-full bg-muted-foreground/50"></span>
-            Non configurée
-          </span>
-        {/if}
-      </div>
+      <!-- Keys list -->
+      {#if loadingKeys}
+        <p class="text-sm text-muted-foreground">Chargement…</p>
+      {:else if coresignalKeys.length === 0}
+        <p class="text-sm text-muted-foreground italic">Aucune clé configurée.</p>
+      {:else}
+        <div class="space-y-2">
+          {#each coresignalKeys as key (key.id)}
+            <div class="flex items-center gap-3 px-3 py-2.5 border border-border rounded-lg bg-muted/20">
+              <!-- Status indicator -->
+              <button
+                type="button"
+                onclick={() => toggleCoresignalKey(key)}
+                title={key.isActive ? "Active – cliquer pour désactiver" : "Inactive – cliquer pour réactiver"}
+                class="shrink-0"
+              >
+                {#if key.isActive}
+                  <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
+                    <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                    Active
+                  </span>
+                {:else}
+                  <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-medium">
+                    <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                    Épuisée
+                  </span>
+                {/if}
+              </button>
 
-      <div class="flex gap-2">
-        <input
-          type="password"
-          bind:value={coresignalKey}
-          placeholder="Collez votre clé API Coresignal…"
-          class="flex-1 px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
-          autocomplete="off"
-        />
-        <button
-          onclick={saveCoresignalKey}
-          disabled={savingKey}
-          class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 shrink-0"
-        >
-          {savingKey ? "Sauvegarde…" : "Sauvegarder"}
-        </button>
-        {#if coresignalKey}
+              <!-- Key info -->
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-mono text-muted-foreground truncate">{key.apiKeyMasked}</p>
+                {#if key.label}
+                  <p class="text-xs text-muted-foreground/70 truncate">{key.label}</p>
+                {/if}
+              </div>
+
+              {#if key.lastUsedAt}
+                <p class="text-xs text-muted-foreground shrink-0 hidden sm:block">
+                  Utilisée {new Date(key.lastUsedAt).toLocaleDateString("fr-FR")}
+                </p>
+              {/if}
+
+              <!-- Delete -->
+              <button
+                type="button"
+                onclick={() => deleteCoresignalKey(key.id)}
+                class="p-1.5 rounded hover:bg-red-50 hover:text-red-500 text-muted-foreground transition-colors shrink-0"
+                title="Supprimer cette clé"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <!-- Add new key -->
+      <div class="space-y-2 pt-2 border-t border-border">
+        <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Ajouter une clé</p>
+        <div class="flex gap-2">
+          <input
+            type="text"
+            bind:value={newKeyLabel}
+            placeholder="Label (optionnel)"
+            class="w-32 px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <input
+            type="password"
+            bind:value={newKeyValue}
+            placeholder="Clé API Coresignal…"
+            class="flex-1 px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+            autocomplete="off"
+            onkeydown={(e) => e.key === "Enter" && addCoresignalKey()}
+          />
           <button
-            onclick={() => { coresignalKey = ""; saveCoresignalKey(); }}
-            class="px-3 py-2 text-sm border border-destructive/30 text-destructive rounded-md hover:bg-destructive/5 transition-colors shrink-0"
+            onclick={addCoresignalKey}
+            disabled={addingKey || !newKeyValue.trim()}
+            class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 shrink-0"
           >
-            Supprimer
+            {addingKey ? "…" : "Ajouter"}
           </button>
-        {/if}
+        </div>
       </div>
     </div>
     <!-- Fullenrich -->

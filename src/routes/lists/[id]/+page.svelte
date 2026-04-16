@@ -32,6 +32,13 @@
   let autoScraping = $state(false);
   let autoScrapeProgress = $state({ current: 0, total: 0 });
   let quickFilter = $state("");
+  let editingListName = $state(false);
+  let listNameDraft = $state(list.name);
+
+  function focusOnMount(node: HTMLElement) {
+    node.focus();
+    if (node instanceof HTMLInputElement) node.select();
+  }
 
   const isLinkedInEnabled = $derived(!!data.userProfile?.unipileLinkedInAccountId);
   const isFullenrichEnabled = $derived(!!data.userProfile?.fullenrichApiKey);
@@ -225,10 +232,83 @@
           return btn;
         },
       },
+      {
+        headerName: "",
+        width: 48,
+        sortable: false,
+        filter: false,
+        resizable: false,
+        suppressMovable: true,
+        cellRenderer: (params: ICellRendererParams) => {
+          const btn = document.createElement("button");
+          btn.title = "Supprimer l'offre";
+          btn.style.cssText = "display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid #fee2e2;background:transparent;cursor:pointer;transition:background 0.15s;";
+          btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>`;
+          btn.addEventListener("mouseenter", () => { btn.style.background = "#fef2f2"; });
+          btn.addEventListener("mouseleave", () => { btn.style.background = "transparent"; });
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            handleDeleteOffer(params.data?.id);
+          });
+          return btn;
+        },
+      },
     ];
   }
 
   let scrapingOfferId = $state<string | null>(null);
+
+  async function handleRenameList() {
+    const trimmed = listNameDraft.trim();
+    if (!trimmed || trimmed === list.name) { editingListName = false; return; }
+    try {
+      const res = await fetch(`/api/lists/${list.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) throw new Error("Erreur lors du renommage");
+      list = { ...list, name: trimmed };
+      editingListName = false;
+      toast.success("Liste renommée !");
+    } catch {
+      toast.error("Impossible de renommer la liste");
+    }
+  }
+
+  let showDeleteOfferDialog = $state(false);
+  let offerToDelete = $state<{ id: string; companyName: string } | null>(null);
+  let isDeletingOffer = $state(false);
+
+  function handleDeleteOffer(offerId: string) {
+    const offer = offers.find((o) => o.id === offerId);
+    if (!offer) return;
+    offerToDelete = { id: offerId, companyName: offer.companyName };
+    showDeleteOfferDialog = true;
+  }
+
+  async function confirmDeleteOffer() {
+    if (!offerToDelete) return;
+    isDeletingOffer = true;
+    try {
+      const res = await fetch(`/api/offers/${offerToDelete.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Erreur lors de la suppression");
+      const deletedId = offerToDelete.id;
+      offers = offers.filter((o) => o.id !== deletedId);
+      contacts = contacts.filter((c) => c.offerId !== deletedId);
+      const updated = { ...contactsByOffer };
+      delete updated[deletedId];
+      contactsByOffer = updated;
+      if (selectedOfferForSheet?.id === deletedId) showOfferSheet = false;
+      showDeleteOfferDialog = false;
+      offerToDelete = null;
+      toast.success("Offre supprimée");
+    } catch {
+      toast.error("Impossible de supprimer l'offre");
+    } finally {
+      isDeletingOffer = false;
+    }
+  }
 
   async function handleScrapeRow(offerId: string) {
     if (!offerId || scrapingOfferId) return;
@@ -472,7 +552,22 @@
     <div class="flex items-center gap-3 min-w-0">
       <a href="/" class="text-muted-foreground hover:text-foreground text-sm flex-shrink-0">← Accueil</a>
       <span class="text-muted-foreground">/</span>
-      <h1 class="text-base font-semibold truncate">{list.name}</h1>
+      {#if editingListName}
+        <input
+          class="text-base font-semibold border-b border-foreground bg-transparent outline-none min-w-0 w-48"
+          bind:value={listNameDraft}
+          onblur={handleRenameList}
+          onkeydown={(e) => { if (e.key === 'Enter') handleRenameList(); if (e.key === 'Escape') { listNameDraft = list.name; editingListName = false; } }}
+          use:focusOnMount
+        />
+      {:else}
+        <button
+          type="button"
+          class="text-base font-semibold truncate cursor-pointer hover:underline decoration-dotted bg-transparent border-none p-0"
+          title="Cliquer pour renommer"
+          onclick={() => { listNameDraft = list.name; editingListName = true; }}
+        >{list.name}</button>
+      {/if}
       {#if autoScraping}
         <span class="text-xs text-violet-600 flex items-center gap-1.5">
           <span class="w-3 h-3 border-2 border-violet-600 border-t-transparent rounded-full animate-spin"></span>
@@ -565,6 +660,7 @@
     onContactUpdated={handleContactUpdated}
     onContactDeleted={handleContactDeleted}
     onOfferScraped={(updated) => { updateOffer(updated); selectedOfferForSheet = { ...selectedOfferForSheet!, ...updated }; }}
+    onOfferDeleted={handleDeleteOffer}
     {isLinkedInEnabled}
     fullenrichEnabled={isFullenrichEnabled}
   />
@@ -641,6 +737,61 @@
   </div>
 {/if}
 
+<!-- Delete offer confirmation dialog -->
+{#if showDeleteOfferDialog && offerToDelete}
+  <div
+    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+    onclick={(e) => { if (e.target === e.currentTarget && !isDeletingOffer) showDeleteOfferDialog = false; }}
+    onkeydown={(e) => { if (e.key === "Escape" && !isDeletingOffer) showDeleteOfferDialog = false; }}
+    role="dialog"
+    aria-modal="true"
+    tabindex="-1"
+  >
+    <div class="bg-white border border-border rounded-xl shadow-xl w-full max-w-sm p-6 space-y-5">
+      <!-- Icon + title -->
+      <div class="flex items-start gap-4">
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-red-50 flex items-center justify-center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+          </svg>
+        </div>
+        <div class="min-w-0">
+          <h3 class="text-base font-semibold text-gray-900">Supprimer l'offre</h3>
+          <p class="text-sm text-muted-foreground mt-1">
+            Vous êtes sur le point de supprimer <span class="font-medium text-gray-700">{offerToDelete.companyName}</span> et tous ses contacts associés.
+          </p>
+          <p class="text-xs text-red-500 mt-2 font-medium">Cette action est irréversible.</p>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="flex gap-3 justify-end pt-1">
+        <button
+          onclick={() => { showDeleteOfferDialog = false; offerToDelete = null; }}
+          disabled={isDeletingOffer}
+          class="px-4 py-2 text-sm border border-input rounded-md hover:bg-accent transition-colors disabled:opacity-50"
+        >
+          Annuler
+        </button>
+        <button
+          onclick={confirmDeleteOffer}
+          disabled={isDeletingOffer}
+          class="px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+        >
+          {#if isDeletingOffer}
+            <span class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            Suppression…
+          {:else}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+            </svg>
+            Supprimer
+          {/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .main-layout {

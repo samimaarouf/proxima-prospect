@@ -1,9 +1,10 @@
 import { json } from "@sveltejs/kit";
 import { db } from "$lib/server/db";
-import { prospectOffer, user } from "$lib/server/db/schema";
+import { prospectOffer } from "$lib/server/db/schema";
 import { eq } from "drizzle-orm";
 import OpenAI from "openai";
 import { OPENAI_API_KEY } from "$env/static/private";
+import { getNextAvailableCoresignalApiKey, markApiKeyAsExhausted, isCreditError } from "$lib/server/coresignalKeys";
 import type { RequestHandler } from "./$types";
 
 export const _ROLE_CATEGORIES = {
@@ -27,18 +28,39 @@ export const _ROLE_CATEGORIES = {
 
 export type RoleCategoryKey = keyof typeof _ROLE_CATEGORIES;
 
+const JOB_BOARD_DOMAINS = new Set([
+  "linkedin.com", "fr.linkedin.com", "indeed.com", "fr.indeed.com",
+  "glassdoor.com", "glassdoor.fr", "monster.com", "monster.fr",
+  "apec.fr", "welcometothejungle.com", "hellowork.com", "cadremploi.fr",
+  "regionsjob.com", "pole-emploi.fr", "jobteaser.com", "meteojob.com",
+  "talent.io", "lesjeudis.com", "chooseyourboss.com", "remixjobs.com",
+]);
+
 function extractDomain(url: string | null): string | null {
   if (!url) return null;
   try {
     const u = new URL(url.startsWith("http") ? url : `https://${url}`);
-    return u.hostname.replace(/^www\./, "");
+    const hostname = u.hostname.replace(/^www\./, "");
+    if (JOB_BOARD_DOMAINS.has(hostname)) return null;
+    return hostname;
   } catch {
     return null;
   }
 }
 
 function cleanCompanyName(name: string): string {
-  return name.replace(/\s*\(.*?\)/g, "").trim();
+  return name
+    // Remove everything after a pipe separator: "PIXALIONE | SEO, PAID…" → "PIXALIONE"
+    .replace(/\s*\|.*$/, "")
+    // Remove everything after an em/en dash separator: "Company – Marketing Agency" → "Company"
+    .replace(/\s*[–—]\s.*$/, "")
+    // Remove everything after " - descriptor" (but keep names like "Coca-Cola")
+    .replace(/\s+-\s+.+$/, "")
+    // Remove parenthetical suffixes: "Upply (France)" → "Upply"
+    .replace(/\s*\(.*?\)/g, "")
+    // Remove common legal suffixes that might differ between sources
+    .replace(/\s*\b(SAS|SARL|SA|SNC|SASU|EI|EURL|SCP|GIE)\b\s*$/i, "")
+    .trim();
 }
 
 function coresignalFetchOptions(extra?: RequestInit): RequestInit & { signal: AbortSignal } {
@@ -48,6 +70,9 @@ function coresignalFetchOptions(extra?: RequestInit): RequestInit & { signal: Ab
 }
 
 function friendlyCoresignalError(status: number): string {
+  if (status === 402) {
+    return "Crédits Coresignal insuffisants. Rechargez votre solde sur app.coresignal.com.";
+  }
   if (status === 504 || status === 502 || status === 503) {
     return "Coresignal est temporairement indisponible (erreur " + status + "). Veuillez réessayer dans quelques minutes.";
   }
@@ -100,20 +125,16 @@ async function coresignalCollect(apiKey: string, id: number): Promise<Record<str
     }
     throw e;
   }
-  if (!res.ok) throw new Error(`Coresignal collect ${id}: ${res.status}`);
+  if (!res.ok) throw new Error(friendlyCoresignalError(res.status));
   return await res.json();
 }
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return json({ error: "Non authentifié" }, { status: 401 });
 
-  const [profile] = await db
-    .select({ coresignalApiKey: user.coresignalApiKey })
-    .from(user)
-    .where(eq(user.id, locals.user.id))
-    .limit(1);
+  let currentApiKey = await getNextAvailableCoresignalApiKey(locals.user.id);
 
-  if (!profile?.coresignalApiKey) {
+  if (!currentApiKey) {
     return json({ error: "Clé API Coresignal non configurée. Rendez-vous dans Paramètres." }, { status: 400 });
   }
 
@@ -131,18 +152,10 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   console.log("[find-decision-makers] roles:", roles);
 
   // ── 1. Build ES query ──────────────────────────────────────────
-  // Company matching inside a nested experience block that requires active_experience=1
-  // Use match_phrase only (exact) — plain `match` tokenizes "Qevlar AI" → matches
-  // every company with "AI" in the name and floods results with irrelevant profiles.
-  // Domain match is kept as a precise fallback for companies indexed by website.
-  const companyShould: object[] = [
-    { match_phrase: { "experience.company_name": cleanedName } },
-  ];
-
-  if (domain) {
-    companyShould.push({ match: { "experience.company_website.domain_only": domain } });
-  }
-
+  // Strategy: match on TOP-LEVEL denormalized fields (active_experience_company_name,
+  // active_experience_company_website_url) which represent CURRENT company only.
+  // This avoids the nested query pitfall where past experiences also match.
+  // Domain match added as a should alternative when available.
   // Role keywords boost — lifts decision-makers to the top of results (not a hard filter)
   const allRoleKeywords = roles.flatMap((r) => _ROLE_CATEGORIES[r].keywords);
   const titleBoost = {
@@ -153,38 +166,63 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     },
   };
 
+  // Strategy:
+  // - active_experience_title must match role keywords (person is CURRENTLY founder/CEO/etc.)
+  // - nested experience must contain the company name (current or recent)
+  // - France boosted via should
   const esQuery = {
     bool: {
       must: [
         { term: { is_deleted: 0 } },
-        { term: { is_working: 1 } },
+        // Current title must match a role keyword
+        { bool: { should: allRoleKeywords.map((kw) => ({ match: { active_experience_title: kw } })), minimum_should_match: 1 } },
+        // Company must appear in experience
         {
           nested: {
             path: "experience",
             query: {
               bool: {
                 must: [
+                  { match_phrase: { "experience.company_name": cleanedName } },
+                ],
+                should: [
                   { term: { "experience.active_experience": 1 } },
-                  { bool: { should: companyShould, minimum_should_match: 1 } },
                 ],
               },
             },
           },
         },
       ],
-      should: [titleBoost],
+      should: [
+        { match: { member_location: "France" } },
+      ],
     },
   };
 
   console.log("[find-decision-makers] esQuery:", JSON.stringify(esQuery, null, 2));
 
-  // ── 2. Search → get IDs ────────────────────────────────────────
+  // ── 2. Search → get IDs (with key rotation on 402) ────────────
   let ids: number[] = [];
-  try {
-    ids = await coresignalSearch(profile.coresignalApiKey, esQuery);
-  } catch (err) {
-    console.error("[find-decision-makers] search failed:", err);
-    return json({ error: String(err) }, { status: 502 });
+  const triedSearchKeys = new Set<string>();
+  for (;;) {
+    try {
+      ids = await coresignalSearch(currentApiKey, esQuery);
+      break;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[find-decision-makers] search failed:", msg);
+      if (isCreditError(msg) && !triedSearchKeys.has(currentApiKey)) {
+        triedSearchKeys.add(currentApiKey);
+        await markApiKeyAsExhausted(locals.user.id, currentApiKey);
+        const next = await getNextAvailableCoresignalApiKey(locals.user.id);
+        if (!next || triedSearchKeys.has(next)) {
+          return json({ error: "Toutes les clés API Coresignal sont épuisées. Ajoutez de nouvelles clés dans les paramètres." }, { status: 402 });
+        }
+        currentApiKey = next;
+        continue;
+      }
+      return json({ error: msg }, { status: 502 });
+    }
   }
 
   console.log("[find-decision-makers] ids returned:", ids.length, ids.slice(0, 5));
@@ -204,16 +242,38 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     picture_url?: string;
   }> = [];
 
+  const triedCollectKeys = new Set<string>();
+  const userId = locals.user!.id;
+
   await Promise.allSettled(
     idsToCollect.map(async (id) => {
-      try {
-        const data = await coresignalCollect(profile.coresignalApiKey!, id);
-        employees.push(data as typeof employees[0]);
-      } catch (err) {
-        console.warn("[find-decision-makers] collect failed for id", id, err);
+      let collectKey = currentApiKey;
+      for (;;) {
+        try {
+          const data = await coresignalCollect(collectKey, id);
+          employees.push(data as typeof employees[0]);
+          break;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (isCreditError(msg) && !triedCollectKeys.has(collectKey)) {
+            triedCollectKeys.add(collectKey);
+            await markApiKeyAsExhausted(userId, collectKey);
+            const next = await getNextAvailableCoresignalApiKey(userId);
+            if (!next || triedCollectKeys.has(next)) break;
+            collectKey = next;
+            continue;
+          }
+          console.warn("[find-decision-makers] collect failed for id", id, msg);
+          break;
+        }
       }
     })
   );
+
+  // If all collects failed due to credit exhaustion
+  if (!employees.length && triedCollectKeys.size > 0) {
+    return json({ error: "Toutes les clés API Coresignal sont épuisées. Ajoutez de nouvelles clés dans les paramètres." }, { status: 402 });
+  }
 
   console.log("[find-decision-makers] collected:", employees.length, "employees");
 
@@ -229,15 +289,22 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     keywords: _ROLE_CATEGORIES[r].keywords,
   }));
 
-  const validEmployees = employees.filter(
-    (e) => e.full_name && e.active_experience_title
-  );
+  // Require at minimum a name; title or company may be missing for some profiles
+  const validEmployees = employees.filter((e) => e.full_name);
 
-  console.log("[find-decision-makers] validEmployees (name+title):", validEmployees.length);
-  console.log("[find-decision-makers] sample:", validEmployees.slice(0, 5).map((e) => `${e.full_name} — ${e.active_experience_title}`));
+  console.log("[find-decision-makers] validEmployees:", validEmployees.length);
+  console.log("[find-decision-makers] sample:", validEmployees.slice(0, 5).map(
+    (e) => `${e.full_name} — ${e.active_experience_title ?? "?"} @ ${(e as Record<string, unknown>).active_experience_company_name ?? "?"}`
+  ));
 
+  // Build employee list with current title AND current company so GPT can verify
+  // both role relevance AND current employment at the target company
   const employeeList = validEmployees
-    .map((e, i) => `${i + 1}. ${e.full_name} — "${e.active_experience_title}"`)
+    .map((e, i) => {
+      const title = e.active_experience_title ?? "inconnu";
+      const company = (e as Record<string, unknown>).active_experience_company_name as string ?? "";
+      return `${i + 1}. ${e.full_name} — titre: "${title}"${company ? ` — entreprise actuelle: "${company}"` : ""}`;
+    })
     .join("\n");
 
   let matchIndices: number[] = [];
@@ -249,11 +316,15 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       messages: [
         {
           role: "system",
-          content: `Tu es un assistant de qualification B2B. Retourne les indices (1-based) des employés dont le poste correspond à au moins une catégorie cible. Réponds UNIQUEMENT en JSON : { "matches": [1, 3, 5] }`,
+          content: `Tu es un assistant de qualification B2B. Tu dois retourner les indices (1-based) des employés qui correspondent à DEUX critères simultanément :
+1. Leur poste actuel correspond à au moins une catégorie cible
+2. Leur entreprise actuelle est "${cleanedName}" (ou une variante proche)
+Si l'entreprise actuelle est différente de "${cleanedName}", EXCLURE la personne même si son titre correspond.
+Réponds UNIQUEMENT en JSON : { "matches": [1, 3, 5] }`,
         },
         {
           role: "user",
-          content: `Catégories :\n${selectedCategories.map((c) => `- ${c.label} : ${c.keywords.join(", ")}`).join("\n")}\n\nEmployés :\n${employeeList}`,
+          content: `Entreprise cible : "${cleanedName}"\n\nCatégories :\n${selectedCategories.map((c) => `- ${c.label} : ${c.keywords.join(", ")}`).join("\n")}\n\nEmployés :\n${employeeList}`,
         },
       ],
       temperature: 0,
@@ -266,14 +337,17 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     matchIndices = (parsed.matches ?? []).filter((n: unknown) => typeof n === "number");
   } catch (err) {
     console.warn("[find-decision-makers] GPT failed, falling back to keyword match:", err);
-    // Fallback: keyword matching
+    // Fallback: keyword matching + company check
     const allKeywords = selectedCategories.flatMap((c) =>
       c.keywords.map((k) => k.toLowerCase())
     );
     matchIndices = validEmployees
       .map((e, i) => {
         const title = (e.active_experience_title ?? "").toLowerCase();
-        return allKeywords.some((kw) => title.includes(kw)) ? i + 1 : null;
+        const company = ((e as Record<string, unknown>).active_experience_company_name as string ?? "").toLowerCase();
+        const titleMatch = allKeywords.some((kw) => title.includes(kw));
+        const companyMatch = !company || company.includes(cleanedName.toLowerCase()) || cleanedName.toLowerCase().includes(company);
+        return titleMatch && companyMatch ? i + 1 : null;
       })
       .filter((n): n is number => n !== null);
   }

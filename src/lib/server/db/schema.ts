@@ -6,6 +6,7 @@ import {
   boolean,
   index,
   jsonb,
+  integer,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -130,6 +131,19 @@ export const prospectContact = pgTable("prospect_contact", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
   offerIdIdx: index("prospect_contact_offer_id_idx").on(table.offerId),
+}));
+
+export const coresignalApiKey = pgTable("coresignal_api_key", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  apiKey: text("api_key").notNull(),
+  label: text("label"),
+  isActive: boolean("is_active").default(true).notNull(),
+  lastUsedAt: timestamp("last_used_at"),
+  order: integer("order").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index("coresignal_api_key_user_id_idx").on(table.userId),
 }));
 
 export const messageHistory = pgTable("prospect_message_history", {
