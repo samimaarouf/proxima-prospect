@@ -1,21 +1,21 @@
 import { json, redirect } from "@sveltejs/kit";
 import { db } from "$lib/server/db";
 import { prospectContact, prospectOffer, prospectList } from "$lib/server/db/schema";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, or, isNotNull, sql } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
 
 /**
  * GET /api/crm
  *
- * Returns all contacts of the current user that have been contacted by email
- * (`email_sent_at IS NOT NULL`) with the joined offer + list metadata.
+ * Returns all contacts of the current user that have been contacted on at
+ * least one channel (email, LinkedIn or WhatsApp), joined with their offer
+ * and list metadata.
  *
  * Ordering (from most urgent to least):
- *  1. Not-closed contacts whose `next_step_at` falls on today or earlier, OR
- *     contacts that only had an email sent (no linkedin/whatsapp/call) and no
- *     next step scheduled — these go first.
+ *  1. Not-closed contacts whose `next_step_at` is today or earlier, OR
+ *     contacts that have no follow-up plan yet (no call and no next step).
  *  2. Everything else (including closed contacts) comes afterwards.
- *  3. Secondary tie-breaker: most recent `email_sent_at` first.
+ *  3. Secondary tie-breaker: most recent send date across any channel.
  */
 export const GET: RequestHandler = async ({ locals }) => {
   if (!locals.user) throw redirect(302, "/login");
@@ -26,15 +26,19 @@ export const GET: RequestHandler = async ({ locals }) => {
          (${prospectContact.nextStepAt} IS NOT NULL
            AND DATE(${prospectContact.nextStepAt}) <= CURRENT_DATE)
          OR (
-           ${prospectContact.linkedinSentAt} IS NULL
-           AND ${prospectContact.whatsappSentAt} IS NULL
-           AND ${prospectContact.calledAt} IS NULL
+           ${prospectContact.calledAt} IS NULL
            AND ${prospectContact.nextStepAt} IS NULL
          )
        )
       THEN 0
       ELSE 1
     END`;
+
+  const lastSentAtExpr = sql<Date | null>`GREATEST(
+      ${prospectContact.emailSentAt},
+      ${prospectContact.linkedinSentAt},
+      ${prospectContact.whatsappSentAt}
+    )`;
 
   const rows = await db
     .select({
@@ -47,6 +51,7 @@ export const GET: RequestHandler = async ({ locals }) => {
       phone2: prospectContact.phone2,
       offerId: prospectOffer.id,
       offerTitle: prospectOffer.offerTitle,
+      offerUrl: prospectOffer.offerUrl,
       companyName: prospectOffer.companyName,
       listId: prospectList.id,
       listName: prospectList.name,
@@ -55,7 +60,9 @@ export const GET: RequestHandler = async ({ locals }) => {
       whatsappSentAt: prospectContact.whatsappSentAt,
       calledAt: prospectContact.calledAt,
       nextStepAt: prospectContact.nextStepAt,
+      nextStep: prospectContact.nextStep,
       contactStatus: prospectContact.contactStatus,
+      notes: prospectContact.notes,
       priority: priorityExpr,
     })
     .from(prospectContact)
@@ -64,10 +71,14 @@ export const GET: RequestHandler = async ({ locals }) => {
     .where(
       and(
         eq(prospectList.userId, locals.user.id),
-        isNotNull(prospectContact.emailSentAt)
-      )
+        or(
+          isNotNull(prospectContact.emailSentAt),
+          isNotNull(prospectContact.linkedinSentAt),
+          isNotNull(prospectContact.whatsappSentAt),
+        ),
+      ),
     )
-    .orderBy(priorityExpr, sql`${prospectContact.emailSentAt} DESC`);
+    .orderBy(priorityExpr, sql`${lastSentAtExpr} DESC NULLS LAST`);
 
   return json(rows);
 };

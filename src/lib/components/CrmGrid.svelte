@@ -5,8 +5,13 @@
   import {
     STATUS_OPTIONS,
     resolveStatus,
+    isTerminalStatus,
     type ContactStatusValue,
   } from "$lib/constants/contactStatus";
+  import {
+    NEXT_STEP_LABELS,
+    resolveNextStepLabel,
+  } from "$lib/constants/nextStepLabels";
   import type {
     ColDef,
     GridOptions,
@@ -24,6 +29,7 @@
     phone2: string | null;
     offerId: string;
     offerTitle: string | null;
+    offerUrl: string | null;
     companyName: string;
     listId: string;
     listName: string;
@@ -32,7 +38,9 @@
     whatsappSentAt: string | null;
     calledAt: string | null;
     nextStepAt: string | null;
+    nextStep: string | null;
     contactStatus: string | null;
+    notes: string | null;
     priority: number;
   };
 
@@ -97,12 +105,46 @@
     currentValue: "undefined",
   });
 
+  let notesEditPopup = $state<{
+    open: boolean;
+    rowId: string | null;
+    contactName: string;
+    value: string;
+  }>({
+    open: false,
+    rowId: null,
+    contactName: "",
+    value: "",
+  });
+
+  let nextStepEditPopup = $state<{
+    open: boolean;
+    rowId: string | null;
+    contactName: string;
+    labelValue: string;
+    dateValue: string; // yyyy-mm-dd
+  }>({
+    open: false,
+    rowId: null,
+    contactName: "",
+    labelValue: "",
+    dateValue: "",
+  });
+
   function closeDatePopup() {
     dateEditPopup = { ...dateEditPopup, open: false };
   }
 
   function closeStatusPopup() {
     statusEditPopup = { ...statusEditPopup, open: false };
+  }
+
+  function closeNotesPopup() {
+    notesEditPopup = { ...notesEditPopup, open: false };
+  }
+
+  function closeNextStepPopup() {
+    nextStepEditPopup = { ...nextStepEditPopup, open: false };
   }
 
   // ===========================
@@ -271,6 +313,64 @@
   }
 
   // ===========================
+  // Notes popup
+  // ===========================
+  function openNotesEditPopup(row: CrmRow) {
+    notesEditPopup = {
+      open: true,
+      rowId: row.id,
+      contactName: row.fullName || "—",
+      value: row.notes || "",
+    };
+  }
+
+  async function saveNotesPopup() {
+    if (!notesEditPopup.rowId) return;
+    const rowId = notesEditPopup.rowId;
+    const value = notesEditPopup.value.trim() || null;
+    updateLocalRow(rowId, { notes: value });
+    closeNotesPopup();
+    await persistUpdate(rowId, { notes: value });
+  }
+
+  // ===========================
+  // Next step popup (label + date)
+  // ===========================
+  function openNextStepEditPopup(row: CrmRow) {
+    nextStepEditPopup = {
+      open: true,
+      rowId: row.id,
+      contactName: row.fullName || "—",
+      labelValue: row.nextStep || "",
+      dateValue: toISODateInputValue(row.nextStepAt),
+    };
+  }
+
+  function pickNextStepLabel(value: string) {
+    nextStepEditPopup = { ...nextStepEditPopup, labelValue: value };
+  }
+
+  async function saveNextStepPopup() {
+    if (!nextStepEditPopup.rowId) return;
+    const rowId = nextStepEditPopup.rowId;
+    const label = nextStepEditPopup.labelValue.trim() || null;
+    const iso = nextStepEditPopup.dateValue
+      ? new Date(nextStepEditPopup.dateValue).toISOString()
+      : null;
+    updateLocalRow(rowId, { nextStep: label, nextStepAt: iso });
+    closeNextStepPopup();
+    await persistUpdate(rowId, { nextStep: label, nextStepAt: iso });
+  }
+
+  async function clearNextStepPopup() {
+    if (!nextStepEditPopup.rowId) return;
+    const rowId = nextStepEditPopup.rowId;
+    updateLocalRow(rowId, { nextStep: null, nextStepAt: null });
+    closeNextStepPopup();
+    await persistUpdate(rowId, { nextStep: null, nextStepAt: null });
+  }
+
+  // ===========================
   // Column renderers
   // ===========================
   function fullNameRenderer(params: ICellRendererParams<CrmRow>) {
@@ -403,6 +503,12 @@
     return link;
   }
 
+  function companyLinkedinSearchUrl(companyName: string | null): string {
+    const name = (companyName || "").trim();
+    if (!name) return "https://www.linkedin.com/";
+    return `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(name)}`;
+  }
+
   function companyRenderer(params: ICellRendererParams<CrmRow>) {
     const row = params.data;
     if (!row) return "";
@@ -417,7 +523,10 @@
     div.appendChild(avatar);
 
     const link = document.createElement("a");
-    link.href = `/lists/${row.listId}`;
+    link.href = companyLinkedinSearchUrl(row.companyName);
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.title = `Ouvrir ${row.companyName || "l'entreprise"} sur LinkedIn`;
     link.style.cssText =
       "font-size:0.8125rem;font-weight:500;color:#1f2937;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
     link.textContent = row.companyName || "—";
@@ -437,9 +546,16 @@
     const row = params.data;
     if (!row) return "";
     const title = row.offerTitle || "(Sans titre)";
+    const hasUrl = !!row.offerUrl;
     const el = document.createElement("a");
-    el.href = `/lists/${row.listId}`;
-    el.title = title;
+    el.href = row.offerUrl || `/lists/${row.listId}`;
+    if (hasUrl) {
+      el.target = "_blank";
+      el.rel = "noopener noreferrer";
+      el.title = `Ouvrir l'offre : ${title}`;
+    } else {
+      el.title = title;
+    }
     el.style.cssText =
       "font-size:0.8125rem;font-weight:500;color:#1f2937;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;max-width:100%;";
     el.textContent = title;
@@ -487,6 +603,72 @@
 
       return wrapper;
     };
+  }
+
+  function nextStepRenderer(params: ICellRendererParams<CrmRow>) {
+    const row = params.data;
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText =
+      "display:flex;align-items:center;gap:6px;height:100%;min-width:0;cursor:pointer;";
+
+    if (!row) return wrapper;
+
+    const opt = resolveNextStepLabel(row.nextStep);
+    const iso = row.nextStepAt;
+
+    if (!opt && !iso) {
+      const span = document.createElement("span");
+      span.style.cssText =
+        "display:inline-flex;align-items:center;gap:4px;color:#9ca3af;font-size:0.8125rem;font-style:italic;";
+      span.innerHTML =
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>Ajouter…</span>';
+      wrapper.appendChild(span);
+      return wrapper;
+    }
+
+    if (opt) {
+      const pill = document.createElement("span");
+      pill.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:9999px;font-size:0.75rem;font-weight:500;background:${opt.bg};color:${opt.fg};max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
+      pill.title = opt.label;
+      pill.textContent = `${opt.emoji ? opt.emoji + " " : ""}${opt.label}`.trim();
+      wrapper.appendChild(pill);
+    }
+
+    if (iso) {
+      const today = isToday(iso);
+      const dateSpan = document.createElement("span");
+      dateSpan.style.cssText = `font-size:0.8125rem;font-weight:${today ? "600" : "500"};color:${today ? "#b45309" : "#6b7280"};${today ? "background:#fef3c7;border-radius:6px;padding:2px 8px;" : ""}flex-shrink:0;`;
+      dateSpan.textContent = formatDate(iso);
+      wrapper.appendChild(dateSpan);
+    }
+
+    return wrapper;
+  }
+
+  function notesRenderer(params: ICellRendererParams<CrmRow>) {
+    const notes = (params.data?.notes as string | null) || "";
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText =
+      "display:flex;align-items:center;gap:6px;height:100%;min-width:0;cursor:pointer;";
+
+    if (!notes) {
+      const icon = document.createElement("span");
+      icon.style.cssText =
+        "display:inline-flex;align-items:center;gap:4px;color:#9ca3af;font-size:0.8125rem;font-style:italic;";
+      icon.innerHTML =
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>Ajouter…</span>';
+      wrapper.appendChild(icon);
+      return wrapper;
+    }
+
+    const text = document.createElement("span");
+    text.style.cssText =
+      "font-size:0.8125rem;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;max-width:100%;";
+    text.title = notes;
+    text.textContent = notes;
+    wrapper.appendChild(text);
+
+    return wrapper;
   }
 
   function statusRenderer(params: ICellRendererParams<CrmRow>) {
@@ -593,12 +775,23 @@
       valueGetter: (p) => p.data?.calledAt ?? null,
     },
     {
-      field: "nextStepAt",
+      colId: "nextStep",
       headerName: "Next step",
-      width: 140,
-      cellRenderer: makeDateRenderer("nextStepAt"),
-      filter: "agDateColumnFilter",
-      valueGetter: (p) => p.data?.nextStepAt ?? null,
+      width: 230,
+      cellRenderer: nextStepRenderer,
+      valueGetter: (p) =>
+        [p.data?.nextStep, p.data?.nextStepAt].filter(Boolean).join(" "),
+      filter: "agTextColumnFilter",
+      sortable: true,
+      comparator: (_a, _b, nodeA, nodeB) => {
+        const dA = nodeA.data?.nextStepAt
+          ? new Date(nodeA.data.nextStepAt).getTime()
+          : Number.POSITIVE_INFINITY;
+        const dB = nodeB.data?.nextStepAt
+          ? new Date(nodeB.data.nextStepAt).getTime()
+          : Number.POSITIVE_INFINITY;
+        return dA - dB;
+      },
     },
     {
       field: "contactStatus",
@@ -607,6 +800,15 @@
       cellRenderer: statusRenderer,
       filter: "agSetColumnFilter",
     },
+    {
+      field: "notes",
+      headerName: "Commentaire",
+      flex: 1,
+      minWidth: 220,
+      cellRenderer: notesRenderer,
+      filter: "agTextColumnFilter",
+      sortable: false,
+    },
   ];
 
   const DATE_FIELDS = new Set<string>([
@@ -614,20 +816,78 @@
     "linkedinSentAt",
     "whatsappSentAt",
     "calledAt",
-    "nextStepAt",
   ]);
+
+  function isRdvScheduled(row: CrmRow | undefined | null): boolean {
+    if (!row) return false;
+    if ((row.contactStatus || "").trim().toLowerCase() === "rdv_pris") return true;
+    return (row.nextStep || "").trim().toLowerCase() === "organiser rdv";
+  }
+
+  function isNextStepOverdue(iso: string | null | undefined): boolean {
+    if (!iso) return false;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const nextStep = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate(),
+    );
+    return nextStep.getTime() < today.getTime();
+  }
+
+  function needsAction(row: CrmRow | undefined | null): boolean {
+    if (!row) return false;
+    if (isTerminalStatus(row.contactStatus)) return false;
+    if (isRdvScheduled(row)) return false;
+    if (isNextStepOverdue(row.nextStepAt)) return true;
+    // No follow-up planned: no call AND no scheduled next step
+    return !row.calledAt && !row.nextStepAt;
+  }
+
+  function lastSentAtMs(row: CrmRow): number {
+    const dates = [
+      row.emailSentAt,
+      row.linkedinSentAt,
+      row.whatsappSentAt,
+    ].map((d) => (d ? new Date(d).getTime() : 0));
+    return Math.max(0, ...dates);
+  }
+
+  // Reactive sort: "to handle" (red) rows float to the top after every local
+  // mutation. Secondary tie-breaker = most recent send across any channel.
+  const sortedRows = $derived(
+    [...rows].sort((a, b) => {
+      const pa = needsAction(a) ? 0 : 1;
+      const pb = needsAction(b) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      return lastSentAtMs(b) - lastSentAtMs(a);
+    }),
+  );
 
   const gridOptions: GridOptions<CrmRow> = {
     defaultColDef: { resizable: true, sortable: true, filter: true },
     columnDefs,
     rowHeight: 52,
+    getRowId: (params) => params.data.id,
+    rowClassRules: {
+      "crm-row-green": (params) => isRdvScheduled(params.data),
+      "crm-row-red": (params) =>
+        !isRdvScheduled(params.data) && needsAction(params.data),
+    },
     onCellClicked: (event: CellClickedEvent<CrmRow>) => {
-      const field = event.colDef.field;
-      if (!field || !event.data) return;
-      if (DATE_FIELDS.has(field)) {
-        openDateEditPopup(event.data, field as DateField);
-      } else if (field === "contactStatus") {
+      const colId = event.colDef.colId || event.colDef.field;
+      if (!colId || !event.data) return;
+      if (DATE_FIELDS.has(colId)) {
+        openDateEditPopup(event.data, colId as DateField);
+      } else if (colId === "nextStep") {
+        openNextStepEditPopup(event.data);
+      } else if (colId === "contactStatus") {
         openStatusEditPopup(event.data);
+      } else if (colId === "notes") {
+        openNotesEditPopup(event.data);
       }
     },
   };
@@ -690,7 +950,7 @@
 
   <div class="crm-grid">
     <AgGrid
-      rowData={rows}
+      rowData={sortedRows}
       {gridOptions}
       quickFilterText={quickFilter}
       enableRowSelection={false}
@@ -862,6 +1122,179 @@
   </div>
 {/if}
 
+<!-- =======================
+     Next step edit popup (label + date)
+     ======================= -->
+{#if nextStepEditPopup.open}
+  <div
+    class="popup-backdrop"
+    role="button"
+    tabindex="-1"
+    onclick={closeNextStepPopup}
+    onkeydown={(e) => e.key === "Escape" && closeNextStepPopup()}
+    aria-label="Fermer"
+  ></div>
+  <div class="popup" role="dialog" aria-modal="true">
+    <div class="popup-header">
+      <div>
+        <div class="popup-title">Next step</div>
+        <div class="popup-subtitle">{nextStepEditPopup.contactName}</div>
+      </div>
+      <button
+        type="button"
+        onclick={closeNextStepPopup}
+        class="text-muted-foreground hover:text-foreground p-1 rounded"
+        aria-label="Fermer"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+    <div class="popup-body">
+      <div>
+        <label class="popup-label" for="crm-next-step-label-input">Action</label>
+        <div class="next-step-tags">
+          {#each NEXT_STEP_LABELS as opt}
+            {@const isCurrent =
+              nextStepEditPopup.labelValue.trim().toLowerCase() ===
+              opt.value.toLowerCase()}
+            <button
+              type="button"
+              class="next-step-tag {isCurrent ? 'is-current' : ''}"
+              style="background:{opt.bg};color:{opt.fg};"
+              onclick={() => pickNextStepLabel(opt.value)}
+            >
+              {#if opt.emoji}<span class="status-emoji">{opt.emoji}</span
+                >{/if}{opt.label}
+            </button>
+          {/each}
+          <button
+            type="button"
+            class="next-step-tag next-step-tag-empty {nextStepEditPopup.labelValue.trim() ===
+            ''
+              ? 'is-current'
+              : ''}"
+            onclick={() => pickNextStepLabel("")}
+          >
+            vide
+          </button>
+        </div>
+
+        <input
+          id="crm-next-step-label-input"
+          type="text"
+          bind:value={nextStepEditPopup.labelValue}
+          placeholder="Ou écris une action personnalisée…"
+          class="popup-input"
+          style="margin-top:10px;"
+        />
+      </div>
+
+      <div>
+        <label class="popup-label" for="crm-next-step-date-input">Date</label>
+        <input
+          id="crm-next-step-date-input"
+          type="date"
+          bind:value={nextStepEditPopup.dateValue}
+          class="popup-input"
+        />
+      </div>
+    </div>
+    <div class="popup-footer">
+      <button
+        type="button"
+        onclick={clearNextStepPopup}
+        class="btn-ghost"
+        disabled={!nextStepEditPopup.labelValue && !nextStepEditPopup.dateValue}
+      >
+        Effacer
+      </button>
+      <div class="flex gap-2">
+        <button type="button" onclick={closeNextStepPopup} class="btn-secondary">
+          Annuler
+        </button>
+        <button type="button" onclick={saveNextStepPopup} class="btn-primary">
+          Enregistrer
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- =======================
+     Notes edit popup
+     ======================= -->
+{#if notesEditPopup.open}
+  <div
+    class="popup-backdrop"
+    role="button"
+    tabindex="-1"
+    onclick={closeNotesPopup}
+    onkeydown={(e) => e.key === "Escape" && closeNotesPopup()}
+    aria-label="Fermer"
+  ></div>
+  <div class="popup" role="dialog" aria-modal="true">
+    <div class="popup-header">
+      <div>
+        <div class="popup-title">Commentaire</div>
+        <div class="popup-subtitle">{notesEditPopup.contactName}</div>
+      </div>
+      <button
+        type="button"
+        onclick={closeNotesPopup}
+        class="text-muted-foreground hover:text-foreground p-1 rounded"
+        aria-label="Fermer"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+    <div class="popup-body">
+      <label class="popup-label" for="crm-notes-input">Notes internes</label>
+      <textarea
+        id="crm-notes-input"
+        bind:value={notesEditPopup.value}
+        placeholder="Écris un commentaire à propos de ce contact…"
+        rows="7"
+        class="popup-textarea"
+      ></textarea>
+    </div>
+    <div class="popup-footer">
+      <div></div>
+      <div class="flex gap-2">
+        <button type="button" onclick={closeNotesPopup} class="btn-secondary">
+          Annuler
+        </button>
+        <button type="button" onclick={saveNotesPopup} class="btn-primary">
+          Enregistrer
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .crm-root {
     display: flex;
@@ -987,6 +1420,28 @@
   }
 
   .popup-input:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  }
+
+  .popup-textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    outline: none;
+    resize: vertical;
+    min-height: 140px;
+    font-family: inherit;
+    line-height: 1.5;
+    color: #111827;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
+  }
+
+  .popup-textarea:focus {
     border-color: #6366f1;
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
   }
@@ -1118,5 +1573,74 @@
 
   :global(.ag-row .ag-cell[col-id="fullName"] a:hover) {
     text-decoration: underline;
+  }
+
+  /* Smoother vertical reposition when rows are re-sorted. */
+  :global(.ag-row) {
+    transition:
+      transform 650ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color 450ms ease;
+  }
+
+  :global(.ag-row .ag-cell) {
+    transition: background-color 450ms ease;
+  }
+
+  :global(.ag-row.crm-row-red),
+  :global(.ag-row.crm-row-red .ag-cell) {
+    background-color: #fee2e2 !important;
+  }
+
+  :global(.ag-row.crm-row-red.ag-row-hover),
+  :global(.ag-row.crm-row-red.ag-row-hover .ag-cell) {
+    background-color: #fecaca !important;
+  }
+
+  :global(.ag-row.crm-row-green),
+  :global(.ag-row.crm-row-green .ag-cell) {
+    background-color: #dcfce7 !important;
+  }
+
+  :global(.ag-row.crm-row-green.ag-row-hover),
+  :global(.ag-row.crm-row-green.ag-row-hover .ag-cell) {
+    background-color: #bbf7d0 !important;
+  }
+
+  .next-step-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+  }
+
+  .next-step-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border-radius: 9999px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid rgba(0, 0, 0, 0.04);
+    transition:
+      transform 0.08s,
+      box-shadow 0.15s,
+      opacity 0.15s;
+  }
+
+  .next-step-tag:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  }
+
+  .next-step-tag.is-current {
+    outline: 2px solid #4f46e5;
+    outline-offset: 1px;
+  }
+
+  .next-step-tag-empty {
+    background: #f3f4f6;
+    color: #6b7280;
   }
 </style>
