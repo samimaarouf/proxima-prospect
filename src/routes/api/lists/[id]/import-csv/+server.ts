@@ -108,7 +108,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       await db.insert(prospectContact).values({
         offerId: offer.id,
         linkedinUrl,
-        contactStatus: "to_contact",
+        contactStatus: "undefined",
       });
     }
 

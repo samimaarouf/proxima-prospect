@@ -397,13 +397,19 @@
   }
 
   const statusLabels: Record<string, { label: string; color: string }> = {
-    to_contact: { label: "À contacter", color: "#d1d5db" },
-    contacted: { label: "Contacté", color: "#93c5fd" },
-    contacted_linkedin: { label: "LinkedIn", color: "#0a66c2" },
-    contacted_whatsapp: { label: "WhatsApp", color: "#25d366" },
-    contacted_email: { label: "Email", color: "#2563eb" },
-    replied: { label: "Répondu", color: "#16a34a" },
-    closed: { label: "Fermé", color: "#ef4444" },
+    undefined: { label: "Non défini", color: "#bfdbfe" },
+    no_answer: { label: "Ne répond pas", color: "#9ca3af" },
+    interested: { label: "Intéressé", color: "#16a34a" },
+    closed: { label: "Clôturé", color: "#6b7280" },
+    // Legacy values (kept for backward-compat before migration runs)
+    to_contact: { label: "Non défini", color: "#bfdbfe" },
+    contacted: { label: "Non défini", color: "#bfdbfe" },
+    contacted_linkedin: { label: "Non défini", color: "#bfdbfe" },
+    contacted_whatsapp: { label: "Non défini", color: "#bfdbfe" },
+    contacted_email: { label: "Non défini", color: "#bfdbfe" },
+    replied: { label: "Non défini", color: "#bfdbfe" },
+    waiting: { label: "Non défini", color: "#bfdbfe" },
+    not_interested: { label: "Non défini", color: "#bfdbfe" },
   };
 
   async function generateMessage(contactId: string) {
@@ -983,7 +989,7 @@
       {#each contacts as contact (contact.id)}
         {@const pic = getProfilePicture(contact)}
         {@const name = contact.fullName || contact.email || contact.linkedinUrl || "Contact"}
-        {@const status = statusLabels[contact.contactStatus || "to_contact"] || statusLabels.to_contact}
+        {@const status = statusLabels[contact.contactStatus || "undefined"] || statusLabels.undefined}
         {@const msg =
           deliveryChannel === "linkedin" ? linkedinMessages[contact.id] : longMessages[contact.id]}
         {@const isGenerating = generatingFor === contact.id}

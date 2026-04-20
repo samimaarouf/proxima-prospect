@@ -11,7 +11,7 @@ if (!DATABASE_URL) throw new Error("DATABASE_URL manquante");
 const pool = new Pool({ connectionString: DATABASE_URL });
 
 const migrations = [
-  "0003_message_history.sql",
+  "0006_backfill_send_dates.sql",
 ];
 
 for (const file of migrations) {

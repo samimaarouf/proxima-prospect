@@ -42,6 +42,27 @@ function parseCsv(text: string): Record<string, string>[] {
   });
 }
 
+async function parseExcel(buffer: ArrayBuffer): Promise<Record<string, string>[]> {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return [];
+  const worksheet = workbook.Sheets[sheetName];
+  const rawRows: (string | number | null | undefined)[][] = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: null,
+  });
+  if (rawRows.length < 2) return [];
+  const headers = rawRows[0].map((h) => String(h ?? "").trim());
+  return rawRows.slice(1)
+    .filter((row) => row.some((c) => c !== null && c !== undefined && String(c).trim() !== ""))
+    .map((values) => {
+      const row: Record<string, string> = {};
+      headers.forEach((h, i) => { row[h] = String(values[i] ?? "").trim(); });
+      return row;
+    });
+}
+
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return json({ error: "Non authentifié" }, { status: 401 });
 
@@ -57,9 +78,16 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const file = formData.get("file") as File | null;
   if (!file) return json({ error: "Fichier manquant" }, { status: 400 });
 
-  const text = await file.text();
-  const rows = parseCsv(text);
-  if (!rows.length) return json({ error: "CSV vide ou invalide" }, { status: 400 });
+  const isExcel = file.name.toLowerCase().endsWith(".xlsx") || file.name.toLowerCase().endsWith(".xls");
+  let rows: Record<string, string>[];
+  if (isExcel) {
+    const buffer = await file.arrayBuffer();
+    rows = await parseExcel(buffer);
+  } else {
+    const text = await file.text();
+    rows = parseCsv(text);
+  }
+  if (!rows.length) return json({ error: "Fichier vide ou invalide" }, { status: 400 });
 
   // Load all contacts for this list (across all offers)
   const offers = await db
@@ -86,17 +114,41 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   let updated = 0;
   let notFound = 0;
 
-  for (const row of rows) {
-    const nom = row["Nom"] ?? "";
-    const prenom = row["Prénom"] ?? row["Prenom"] ?? "";
-    const linkedin = (row["LinkedIn"] ?? "").trim();
-    const email1 = (row["Email 1"] ?? "").trim();
-    const email2 = (row["Email 2"] ?? "").trim();
-    const tel1 = (row["Tél 1"] ?? row["Tel 1"] ?? "").trim();
-    const tel2 = (row["Tél 2"] ?? row["Tel 2"] ?? "").trim();
+  // Detect format: candidate_* columns vs. our Nom/Prénom/LinkedIn format
+  const firstRow = rows[0] ?? {};
+  const isCandidateFormat = Object.keys(firstRow).some((k) => k.startsWith("candidate_"));
 
-    // Reconstruct fullName
-    const fullName = [prenom, nom].filter(Boolean).join(" ") || null;
+  for (const row of rows) {
+    let linkedin: string;
+    let email1: string;
+    let email2: string;
+    let tel1: string;
+    let tel2: string;
+    let fullName: string | null;
+
+    if (isCandidateFormat) {
+      // Support both candidate__linkedin and candidate_li / candidate_linkedin variants
+      linkedin = (
+        row["candidate__linkedin"] ??
+        row["candidate_linkedin"] ??
+        row["candidate_li"] ??
+        ""
+      ).trim();
+      email1 = (row["candidate__email_1"] ?? row["candidate_e"] ?? row["candidate_email"] ?? "").trim();
+      email2 = (row["candidate__email_2"] ?? row["candidate_e2"] ?? "").trim();
+      tel1 = (row["candidate__phone_1"] ?? row["candidate_p"] ?? row["candidate_phone"] ?? "").trim();
+      tel2 = (row["candidate__phone_2"] ?? row["candidate_p2"] ?? "").trim();
+      fullName = (row["candidate__name"] ?? row["candidate_r"] ?? row["candidate_name"] ?? "").trim() || null;
+    } else {
+      const nom = row["Nom"] ?? "";
+      const prenom = row["Prénom"] ?? row["Prenom"] ?? "";
+      linkedin = (row["LinkedIn"] ?? "").trim();
+      email1 = (row["Email 1"] ?? "").trim();
+      email2 = (row["Email 2"] ?? "").trim();
+      tel1 = (row["Tél 1"] ?? row["Tel 1"] ?? "").trim();
+      tel2 = (row["Tél 2"] ?? row["Tel 2"] ?? "").trim();
+      fullName = [prenom, nom].filter(Boolean).join(" ") || null;
+    }
 
     // Match contact
     let matched: typeof allContacts[0] | undefined;

@@ -1,5 +1,10 @@
 <script lang="ts">
   import { toast } from "svelte-sonner";
+  import {
+    STATUS_OPTIONS,
+    DEFAULT_STATUS,
+    resolveStatus,
+  } from "$lib/constants/contactStatus";
 
   type Contact = {
     id: string;
@@ -236,16 +241,9 @@
     }
   }
 
-  const statusOptions = [
-    { value: "to_contact", label: "À contacter", color: "bg-gray-100 text-gray-700" },
-    { value: "contacted", label: "Contacté", color: "bg-blue-100 text-blue-700" },
-    { value: "replied", label: "Répondu", color: "bg-green-100 text-green-700" },
-    { value: "closed", label: "Fermé", color: "bg-red-100 text-red-700" },
-  ];
+  const statusOptions = STATUS_OPTIONS;
 
-  const currentStatus = $derived(
-    statusOptions.find((s) => s.value === contact.contactStatus) || statusOptions[0]
-  );
+  const currentStatus = $derived(resolveStatus(contact.contactStatus));
 </script>
 
 <!-- Overlay -->
@@ -326,12 +324,12 @@
   <div class="flex items-center gap-3 px-6 py-3 border-b border-border bg-muted/30 flex-shrink-0 flex-wrap">
     <!-- Status select -->
     <select
-      value={contact.contactStatus || "to_contact"}
+      value={contact.contactStatus || DEFAULT_STATUS}
       onchange={(e) => updateStatus((e.target as HTMLSelectElement).value)}
       class="text-xs border border-input rounded px-2 py-1 bg-background cursor-pointer"
     >
       {#each statusOptions as opt}
-        <option value={opt.value}>{opt.label}</option>
+        <option value={opt.value}>{opt.emoji ? opt.emoji + " " : ""}{opt.label}</option>
       {/each}
     </select>
 

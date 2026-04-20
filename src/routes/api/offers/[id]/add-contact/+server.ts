@@ -40,7 +40,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       fullName: fullName || null,
       jobTitle: jobTitle || null,
       email: email || null,
-      contactStatus: "to_contact",
+      contactStatus: "undefined",
     })
     .returning();
 

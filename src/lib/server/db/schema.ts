@@ -125,8 +125,14 @@ export const prospectContact = pgTable("prospect_contact", {
   aiMessage: text("ai_message"),
   /** Invitation LinkedIn (< 300 car.) — distinct de WhatsApp / email (`aiMessage`) */
   aiMessageLinkedin: text("ai_message_linkedin"),
-  // Status
-  contactStatus: text("contact_status").default("to_contact"),
+  // Status (Situation: undefined | interested | not_interested | no_answer | waiting | closed)
+  contactStatus: text("contact_status").default("undefined"),
+  // CRM tracking dates (per channel + next step)
+  emailSentAt: timestamp("email_sent_at"),
+  linkedinSentAt: timestamp("linkedin_sent_at"),
+  whatsappSentAt: timestamp("whatsapp_sent_at"),
+  calledAt: timestamp("called_at"),
+  nextStepAt: timestamp("next_step_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({

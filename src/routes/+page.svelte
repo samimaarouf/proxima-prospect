@@ -1,6 +1,7 @@
 <script lang="ts">
   import { toast } from "svelte-sonner";
   import { goto } from "$app/navigation";
+  import CrmGrid from "$lib/components/CrmGrid.svelte";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
@@ -10,6 +11,7 @@
   let newListName = $state("");
   let newListPitch = $state("");
   let creating = $state(false);
+  let activeTab = $state<"crm" | "lists">("crm");
 
   async function createList() {
     if (!newListName.trim()) {
@@ -84,74 +86,117 @@
     </div>
   </header>
 
-  <main class="max-w-6xl mx-auto px-6 py-8">
-    <!-- Page title + CTA -->
-    <div class="flex items-center justify-between mb-8">
-      <div>
-        <h2 class="text-2xl font-bold">Listes de prospection</h2>
-        <p class="text-sm text-muted-foreground mt-1">
-          {lists.length} liste{lists.length !== 1 ? "s" : ""}
-        </p>
-      </div>
+  <!-- Tabs -->
+  <div class="border-b border-border bg-card px-6">
+    <nav class="flex gap-1" role="tablist">
       <button
-        onclick={() => (showCreateDialog = true)}
-        class="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "crm"}
+        onclick={() => (activeTab = "crm")}
+        class={`relative px-4 py-3 text-sm font-medium transition-colors -mb-px ${
+          activeTab === "crm"
+            ? "text-primary border-b-2 border-primary"
+            : "text-muted-foreground hover:text-foreground border-b-2 border-transparent"
+        }`}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="12" y1="5" x2="12" y2="19"></line>
-          <line x1="5" y1="12" x2="19" y2="12"></line>
-        </svg>
-        Nouvelle liste
+        CRM
       </button>
-    </div>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "lists"}
+        onclick={() => (activeTab = "lists")}
+        class={`relative px-4 py-3 text-sm font-medium transition-colors -mb-px ${
+          activeTab === "lists"
+            ? "text-primary border-b-2 border-primary"
+            : "text-muted-foreground hover:text-foreground border-b-2 border-transparent"
+        }`}
+      >
+        Listes de prospection
+      </button>
+    </nav>
+  </div>
 
-    <!-- Lists grid -->
-    {#if lists.length === 0}
-      <div class="text-center py-20 text-muted-foreground">
-        <div class="text-5xl mb-4">📋</div>
-        <p class="text-lg font-medium mb-2">Aucune liste de prospection</p>
-        <p class="text-sm">Créez votre première liste pour commencer</p>
+  <main class={activeTab === "crm" ? "px-6 py-6" : "max-w-7xl mx-auto px-6 py-8"}>
+    {#if activeTab === "crm"}
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-2xl font-bold">CRM</h2>
+          <p class="text-sm text-muted-foreground mt-1">
+            Contacts contactés par email, triés par priorité (next step aujourd'hui ou action unique à relancer).
+          </p>
+        </div>
       </div>
+
+      <CrmGrid />
     {:else}
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {#each lists as list}
-          <div class="border border-border rounded-xl bg-card p-5 hover:shadow-md transition-shadow group">
-            <div class="flex items-start justify-between mb-3">
-              <a
-                href={`/lists/${list.id}`}
-                class="font-semibold text-foreground hover:text-primary transition-colors truncate flex-1 mr-2"
-              >
-                {list.name}
-              </a>
-              <button
-                onclick={() => deleteList(list.id, list.name)}
-                class="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all p-1 rounded"
-                title="Supprimer"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="3 6 5 6 21 6"></polyline>
-                  <path d="M19 6l-1 14H6L5 6"></path>
-                  <path d="M10 11v6"></path>
-                  <path d="M14 11v6"></path>
-                  <path d="M9 6V4h6v2"></path>
-                </svg>
-              </button>
-            </div>
-            {#if list.pitch}
-              <p class="text-sm text-muted-foreground line-clamp-2 mb-3">{list.pitch}</p>
-            {/if}
-            <div class="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Créée le {formatDate(list.createdAt)}</span>
-              <a
-                href={`/lists/${list.id}`}
-                class="text-primary hover:underline font-medium"
-              >
-                Ouvrir →
-              </a>
-            </div>
-          </div>
-        {/each}
+      <div class="flex items-center justify-between mb-8">
+        <div>
+          <h2 class="text-2xl font-bold">Listes de prospection</h2>
+          <p class="text-sm text-muted-foreground mt-1">
+            {lists.length} liste{lists.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+        <button
+          onclick={() => (showCreateDialog = true)}
+          class="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          Nouvelle liste
+        </button>
       </div>
+
+      {#if lists.length === 0}
+        <div class="text-center py-20 text-muted-foreground">
+          <div class="text-5xl mb-4">📋</div>
+          <p class="text-lg font-medium mb-2">Aucune liste de prospection</p>
+          <p class="text-sm">Créez votre première liste pour commencer</p>
+        </div>
+      {:else}
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {#each lists as list}
+            <div class="border border-border rounded-xl bg-card p-5 hover:shadow-md transition-shadow group">
+              <div class="flex items-start justify-between mb-3">
+                <a
+                  href={`/lists/${list.id}`}
+                  class="font-semibold text-foreground hover:text-primary transition-colors truncate flex-1 mr-2"
+                >
+                  {list.name}
+                </a>
+                <button
+                  onclick={() => deleteList(list.id, list.name)}
+                  class="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all p-1 rounded"
+                  title="Supprimer"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6l-1 14H6L5 6"></path>
+                    <path d="M10 11v6"></path>
+                    <path d="M14 11v6"></path>
+                    <path d="M9 6V4h6v2"></path>
+                  </svg>
+                </button>
+              </div>
+              {#if list.pitch}
+                <p class="text-sm text-muted-foreground line-clamp-2 mb-3">{list.pitch}</p>
+              {/if}
+              <div class="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Créée le {formatDate(list.createdAt)}</span>
+                <a
+                  href={`/lists/${list.id}`}
+                  class="text-primary hover:underline font-medium"
+                >
+                  Ouvrir →
+                </a>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
     {/if}
   </main>
 </div>

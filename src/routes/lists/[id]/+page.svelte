@@ -496,17 +496,23 @@
   async function handleFileInput(e: Event) {
     importFile = (e.target as HTMLInputElement).files?.[0] || null;
     csvFormat = null;
-    if (importFile?.name.toLowerCase().endsWith(".csv")) {
+    if (!importFile) return;
+    const name = importFile.name.toLowerCase();
+    if (name.endsWith(".csv")) {
       // Read first line to detect format
       const slice = await importFile.slice(0, 200).text();
       const firstLine = slice.replace(/\uFEFF/, "").split(/\r?\n/)[0] ?? "";
-      // Contact CSV has "Nom" and "LinkedIn" columns
-      if (firstLine.includes("Nom") && firstLine.includes("LinkedIn")) {
+      // Contact CSV: either our export format (Nom + LinkedIn) or candidate_* format
+      if (
+        (firstLine.includes("Nom") && firstLine.includes("LinkedIn")) ||
+        firstLine.includes("candidate_")
+      ) {
         csvFormat = "contacts";
       } else {
         csvFormat = "calibre";
       }
     }
+    // For xlsx: csvFormat stays null → user picks via radio buttons in the dialog
   }
 
   function handleExport() {
@@ -686,17 +692,31 @@
       {:else if csvFormat === "contacts"}
         <div class="text-sm text-green-700 bg-green-50 border border-green-100 rounded-lg p-3 space-y-1">
           <p class="font-medium">Format contacts détecté</p>
-          <p class="text-xs text-green-600">Met à jour les contacts existants : Nom, Prénom, LinkedIn, Email 1, Email 2, Tél 1, Tél 2.</p>
+          <p class="text-xs text-green-600">Met à jour les contacts existants via LinkedIn. Supporte le format export (Nom, LinkedIn, Email…) et le format <code>candidate_*</code> (candidate__name, candidate__linkedin, candidate__email_1…).</p>
         </div>
       {:else if csvFormat === "calibre"}
         <div class="text-sm text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg p-3 space-y-1">
           <p class="font-medium">Format CSV calibre détecté</p>
           <p class="text-xs text-indigo-600">Une ligne = une offre + un décisionnaire (CEO/Fondateur). L'enrichissement LinkedIn se lancera automatiquement.</p>
         </div>
-      {:else}
-        <div class="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-3 space-y-1">
-          <p class="font-medium">Format Excel détecté</p>
-          <p class="text-xs text-amber-600">Colonnes : Entreprise | Intitulé du poste | URL Offre | Localisation | LinkedIn | Tél. 1 | Tél. 2 | Email…</p>
+      {:else if importFile}
+        <!-- Excel: let user choose the format -->
+        <div class="space-y-2">
+          <p class="text-sm font-medium text-gray-700">Quel est le format de ce fichier ?</p>
+          <label class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors {csvFormat === null ? 'border-indigo-300 bg-indigo-50/40' : 'border-gray-200 hover:border-gray-300'}">
+            <input type="radio" name="xlsxFormat" class="mt-0.5" checked={csvFormat === null} onchange={() => (csvFormat = null)} />
+            <div>
+              <p class="text-sm font-medium text-indigo-800">Calibre (créer des offres)</p>
+              <p class="text-xs text-indigo-600">Colonnes : Entreprise | Intitulé | URL | Localisation | LinkedIn | Tél | Email…</p>
+            </div>
+          </label>
+          <label class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors {csvFormat === 'contacts' ? 'border-green-300 bg-green-50/40' : 'border-gray-200 hover:border-gray-300'}">
+            <input type="radio" name="xlsxFormat" class="mt-0.5" checked={csvFormat === "contacts"} onchange={() => (csvFormat = "contacts")} />
+            <div>
+              <p class="text-sm font-medium text-green-800">Contacts (mettre à jour)</p>
+              <p class="text-xs text-green-600">Colonnes : <code>candidate__name</code>, <code>candidate__linkedin</code>, <code>candidate__email_1</code>, <code>candidate__phone_1</code>…</p>
+            </div>
+          </label>
         </div>
       {/if}
 

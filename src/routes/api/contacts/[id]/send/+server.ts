@@ -191,13 +191,22 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       message: messageToSend,
     });
 
-    // Update contact status to track which channel was used
+    // Auto-fill the per-channel "sent at" column (without overriding if already set).
+    const now = new Date();
+    const channelField: Record<string, "emailSentAt" | "linkedinSentAt" | "whatsappSentAt"> = {
+      email: "emailSentAt",
+      linkedin: "linkedinSentAt",
+      whatsapp: "whatsappSentAt",
+    };
+    const patch: Record<string, unknown> = { updatedAt: now };
+    const field = channelField[channel];
+    if (field && !(contact as Record<string, unknown>)[field]) {
+      patch[field] = now;
+    }
+
     const [updated] = await db
       .update(prospectContact)
-      .set({
-        contactStatus: `contacted_${channel}`,
-        updatedAt: new Date(),
-      })
+      .set(patch)
       .where(eq(prospectContact.id, params.id))
       .returning();
 
