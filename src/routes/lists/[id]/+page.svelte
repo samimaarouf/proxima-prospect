@@ -333,6 +333,9 @@
     columnDefs: getColumnDefs(),
     rowHeight: 52,
     rowClass: "cursor-pointer",
+    rowClassRules: {
+      "offer-row-yellow": (params) => !!params.data?.hasOtherOffer,
+    },
     onRowClicked: handleRowClicked,
   };
 
@@ -374,9 +377,9 @@
       if (csvFormat === "contacts") {
         successMsg = `Import terminé : ${result.updated} contact(s) mis à jour${result.notFound > 0 ? `, ${result.notFound} non trouvé(s)` : ""}`;
       } else if (isCsvFile) {
-        successMsg = `Import CSV terminé : ${result.imported} offre(s) importée(s)`;
+        successMsg = `Import CSV terminé : ${result.imported} offre(s) importée(s)${result.duplicates > 0 ? `, ${result.duplicates} doublon(s) ignoré(s)` : ""}`;
       } else {
-        successMsg = `Import terminé : ${result.contactsCreated} contacts, ${result.offersCreated} offre(s)`;
+        successMsg = `Import terminé : ${result.contactsCreated} contacts, ${result.offersCreated} offre(s)${result.offersSkipped > 0 ? `, ${result.offersSkipped} offre(s) déjà existante(s) ignorée(s)` : ""}`;
       }
       toast.success(successMsg);
 
@@ -891,5 +894,15 @@
 
   :global(.ag-row:hover) {
     background-color: #f5f3ff !important;
+  }
+
+  :global(.ag-row.offer-row-yellow),
+  :global(.ag-row.offer-row-yellow .ag-cell) {
+    background-color: #fef9c3 !important;
+  }
+
+  :global(.ag-row.offer-row-yellow.ag-row-hover),
+  :global(.ag-row.offer-row-yellow.ag-row-hover .ag-cell) {
+    background-color: #fef08a !important;
   }
 </style>

@@ -3,6 +3,7 @@ import { db } from "$lib/server/db";
 import { prospectList, prospectOffer, prospectContact } from "$lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
+import { buildOfferIndex, loadUserOffers } from "$lib/server/offerMatch";
 
 // New Excel column format (0-indexed):
 // Entreprise | Intitulé du poste | URL Offre | Localisation | LinkedIn | Tél. 1 | Tél. 2 | Email | Date | Touches | Action | Étape | Notes
@@ -217,13 +218,29 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       return json({ error: "Aucun contact valide trouvé dans le fichier" }, { status: 400 });
     }
 
+    // Pre-load every offer the user already has (across every list) so we can
+    // skip rows whose offer already exists somewhere. Matching is done on the
+    // normalized offerUrl when present, otherwise on (companyName + offerTitle).
+    const existingOffers = await loadUserOffers(locals.user.id);
+    const existingIndex = buildOfferIndex(existingOffers);
+
     // Group contacts by company+offer to create offers first
     const offerMap = new Map<string, string>(); // key: "companyName||offerTitle||offerUrl" => offerId
     let contactsCreated = 0;
     let offersCreated = 0;
+    let offersSkipped = 0;
+    const skippedOfferKeys = new Set<string>();
 
     for (const contact of parsed) {
       const offerKey = `${contact.companyName}||${contact.offerTitle || ""}||${contact.offerUrl || ""}`;
+
+      // Skip every row whose offer already exists for this user (any list).
+      if (skippedOfferKeys.has(offerKey)) continue;
+      if (!offerMap.has(offerKey) && existingIndex.hasMatch(contact)) {
+        skippedOfferKeys.add(offerKey);
+        offersSkipped++;
+        continue;
+      }
 
       if (!offerMap.has(offerKey)) {
         // Create or find offer
@@ -238,6 +255,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
           })
           .returning({ id: prospectOffer.id });
         offerMap.set(offerKey, newOffer.id);
+        existingIndex.add(contact);
         offersCreated++;
       }
 
@@ -285,7 +303,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       }
     }
 
-    return json({ success: true, contactsCreated, offersCreated });
+    return json({ success: true, contactsCreated, offersCreated, offersSkipped });
   } catch (err) {
     console.error("Import error:", err);
     return json(

@@ -3,6 +3,7 @@ import { db } from "$lib/server/db";
 import { prospectList, prospectOffer, prospectContact, user } from "$lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { PageServerLoad } from "./$types";
+import { isSameOffer, loadUserOffers, normalizeCompany } from "$lib/server/offerMatch";
 
 export const load: PageServerLoad = async ({ locals, params }) => {
   if (!locals.user) {
@@ -21,10 +22,31 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 
   const list = lists[0];
 
-  const offers = await db
+  const offersRaw = await db
     .select()
     .from(prospectOffer)
     .where(eq(prospectOffer.listId, params.id));
+
+  // Flag offers where the same company also exists in the user's data with a
+  // DIFFERENT offer (angle/URL) — the UI paints those rows yellow as a warning.
+  const allUserOffers = await loadUserOffers(locals.user.id);
+  const offersByCompany = new Map<string, typeof allUserOffers>();
+  for (const o of allUserOffers) {
+    const key = normalizeCompany(o.companyName);
+    if (!key) continue;
+    const list = offersByCompany.get(key) || [];
+    list.push(o);
+    offersByCompany.set(key, list);
+  }
+
+  const offers = offersRaw.map((o) => {
+    const key = normalizeCompany(o.companyName);
+    const siblings = key ? offersByCompany.get(key) || [] : [];
+    const hasOtherOffer = siblings.some(
+      (s) => s.id !== o.id && !isSameOffer(s, o),
+    );
+    return { ...o, hasOtherOffer };
+  });
 
   const offerIds = offers.map((o) => o.id);
   let contacts: (typeof prospectContact.$inferSelect & { companyName: string; offerUrl: string | null })[] = [];

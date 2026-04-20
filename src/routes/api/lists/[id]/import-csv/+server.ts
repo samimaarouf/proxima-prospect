@@ -3,6 +3,7 @@ import { db } from "$lib/server/db";
 import { prospectList, prospectOffer, prospectContact } from "$lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
+import { buildOfferIndex, loadUserOffers } from "$lib/server/offerMatch";
 
 // Parse CSV properly handling multi-line quoted fields and auto-detecting separator
 function parseCsv(text: string): Record<string, string>[] {
@@ -74,8 +75,15 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
   if (!rows.length) return json({ error: "CSV vide ou invalide" }, { status: 400 });
 
+  // Pre-load every offer the user already has (across every list) so we can
+  // skip rows whose offer already exists somewhere. Matching is done on the
+  // normalized offerUrl when present, otherwise on (companyName + offerTitle).
+  const existingOffers = await loadUserOffers(locals.user.id);
+  const offerIndex = buildOfferIndex(existingOffers);
+
   let imported = 0;
   let skipped = 0;
+  let duplicates = 0;
 
   for (const row of rows) {
     const companyName = row["Entreprise"] || row["Company"] || "";
@@ -85,6 +93,17 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     const localisation = row["Localisation"] || row["Ville"] || null;
 
     if (!companyName) { skipped++; continue; }
+
+    const candidate = {
+      companyName,
+      offerTitle: offerTitle || null,
+      offerUrl: offerUrl || null,
+    };
+
+    if (offerIndex.hasMatch(candidate)) {
+      duplicates++;
+      continue;
+    }
 
     // Create one offer per row
     const [offer] = await db
@@ -112,8 +131,9 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       });
     }
 
+    offerIndex.add(candidate);
     imported++;
   }
 
-  return json({ imported, skipped });
+  return json({ imported, skipped, duplicates });
 };
