@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { page } from "$app/stores";
   import { toast } from "svelte-sonner";
   import AgGrid from "$lib/components/custom/AgGrid/AgGrid.svelte";
   import OfferSheet from "$lib/components/OfferSheet.svelte";
@@ -42,6 +44,17 @@
 
   const isLinkedInEnabled = $derived(!!data.userProfile?.unipileLinkedInAccountId);
   const isFullenrichEnabled = $derived(!!data.userProfile?.fullenrichApiKey);
+
+  // Auto-open the sidesheet for ?offer=<id> (used to deep-link duplicate offers).
+  onMount(() => {
+    const offerId = $page.url.searchParams.get("offer");
+    if (!offerId) return;
+    const match = offers.find((o) => o.id === offerId);
+    if (match) {
+      selectedOfferForSheet = match;
+      showOfferSheet = true;
+    }
+  });
 
   // Derived: offers enriched with contact count
   const offersWithCount = $derived(
@@ -496,14 +509,16 @@
     }
   }
 
-  async function handleFileInput(e: Event) {
-    importFile = (e.target as HTMLInputElement).files?.[0] || null;
+  let isDraggingFile = $state(false);
+
+  async function setImportFile(file: File | null) {
+    importFile = file;
     csvFormat = null;
-    if (!importFile) return;
-    const name = importFile.name.toLowerCase();
+    if (!file) return;
+    const name = file.name.toLowerCase();
     if (name.endsWith(".csv")) {
       // Read first line to detect format
-      const slice = await importFile.slice(0, 200).text();
+      const slice = await file.slice(0, 200).text();
       const firstLine = slice.replace(/\uFEFF/, "").split(/\r?\n/)[0] ?? "";
       // Contact CSV: either our export format (Nom + LinkedIn) or candidate_* format
       if (
@@ -516,6 +531,44 @@
       }
     }
     // For xlsx: csvFormat stays null → user picks via radio buttons in the dialog
+  }
+
+  function handleFileInput(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0] || null;
+    return setImportFile(file);
+  }
+
+  function isAcceptedFile(file: File): boolean {
+    const n = file.name.toLowerCase();
+    return n.endsWith(".csv") || n.endsWith(".xlsx") || n.endsWith(".xls");
+  }
+
+  function handleDragOver(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    isDraggingFile = true;
+  }
+
+  function handleDragLeave(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    isDraggingFile = false;
+  }
+
+  async function handleFileDrop(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    isDraggingFile = false;
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    if (!isAcceptedFile(file)) {
+      toast.error("Format non supporté. Glissez un fichier .csv, .xlsx ou .xls");
+      return;
+    }
+    // Open the dialog automatically if the drop happens outside of it.
+    showImportDialog = true;
+    await setImportFile(file);
   }
 
   function handleExport() {
@@ -555,7 +608,24 @@
   const totalContacts = $derived(contacts.length);
 </script>
 
+<svelte:window
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleFileDrop}
+/>
+
 <div class="main-layout">
+  <!-- Full-page drop overlay -->
+  {#if isDraggingFile && !showImportDialog}
+    <div class="fixed inset-0 z-[70] bg-indigo-500/10 border-4 border-dashed border-indigo-500 pointer-events-none flex items-center justify-center">
+      <div class="bg-white rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center gap-2 border border-indigo-200">
+        <svg class="text-indigo-500" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <p class="text-base font-semibold text-indigo-700">Déposez votre fichier pour l'importer</p>
+        <p class="text-xs text-muted-foreground">.csv ou .xlsx</p>
+      </div>
+    </div>
+  {/if}
+
   <!-- Header -->
   <div class="header-bar">
     <div class="flex items-center gap-3 min-w-0">
@@ -724,19 +794,26 @@
       {/if}
 
       <div
-        class="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors {importFile ? 'border-indigo-300 bg-indigo-50/30' : 'border-gray-200 hover:border-indigo-400'}"
+        class="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors {isDraggingFile ? 'border-indigo-500 bg-indigo-50' : importFile ? 'border-indigo-300 bg-indigo-50/30' : 'border-gray-200 hover:border-indigo-400'}"
         onclick={() => document.getElementById("file-input")?.click()}
         role="button"
         tabindex="0"
         onkeydown={(e) => e.key === "Enter" && document.getElementById("file-input")?.click()}
+        ondragover={handleDragOver}
+        ondragenter={handleDragOver}
+        ondragleave={handleDragLeave}
+        ondrop={handleFileDrop}
       >
         <input id="file-input" type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange={handleFileInput} />
-        {#if importFile}
+        {#if isDraggingFile}
+          <svg class="mx-auto mb-2 text-indigo-500" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <p class="text-indigo-600 text-sm font-medium">Relâchez pour importer</p>
+        {:else if importFile}
           <p class="font-medium text-sm">📄 {importFile.name}</p>
           <p class="text-muted-foreground text-xs mt-1">{(importFile.size / 1024).toFixed(1)} KB · <span class="text-indigo-500 underline">Changer</span></p>
         {:else}
           <svg class="mx-auto mb-2 text-gray-300" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          <p class="text-muted-foreground text-sm">Cliquez pour sélectionner</p>
+          <p class="text-muted-foreground text-sm">Cliquez ou glissez un fichier ici</p>
           <p class="text-muted-foreground text-xs mt-1">.csv ou .xlsx</p>
         {/if}
       </div>

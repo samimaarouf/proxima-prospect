@@ -1,6 +1,15 @@
 <script lang="ts">
   import { toast } from "svelte-sonner";
 
+  type DuplicateOffer = {
+    id: string;
+    listId: string;
+    listName: string;
+    offerTitle: string | null;
+    offerUrl: string | null;
+    companyName: string;
+  };
+
   type Offer = {
     id: string;
     companyName: string;
@@ -8,6 +17,7 @@
     offerUrl: string | null;
     offerLocation: string | null;
     offerContent: string | null;
+    duplicateOffers?: DuplicateOffer[];
   };
 
   type Contact = {
@@ -841,6 +851,45 @@
           </button>
         {/if}
       </div>
+
+      {#if offer.duplicateOffers && offer.duplicateOffers.length > 0}
+        <div class="mt-2 p-2.5 rounded-md bg-amber-50 border border-amber-200">
+          <div class="flex items-center gap-1.5 text-xs font-medium text-amber-900 mb-1.5">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            {offer.duplicateOffers.length === 1
+              ? "Une autre offre existe déjà pour cette entreprise"
+              : `${offer.duplicateOffers.length} autres offres existent pour cette entreprise`}
+          </div>
+          <ul class="space-y-1">
+            {#each offer.duplicateOffers as dup (dup.id)}
+              <li class="flex items-center gap-1.5 text-xs">
+                <a
+                  href={`/lists/${dup.listId}?offer=${dup.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center gap-1 text-amber-900 hover:text-amber-700 hover:underline font-medium truncate"
+                  title={`Ouvrir l'offre « ${dup.offerTitle || dup.companyName} » dans un nouvel onglet`}
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="flex-shrink-0">
+                    <path d="M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                  <span class="truncate">{dup.offerTitle || "(sans titre)"}</span>
+                </a>
+                <span class="text-amber-700">·</span>
+                <span class="text-amber-700 truncate" title={`Dans la liste « ${dup.listName} »`}>
+                  {dup.listName}
+                </span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
     </div>
     <div class="flex items-center gap-1 ml-4 flex-shrink-0">
       {#if onOfferDeleted}

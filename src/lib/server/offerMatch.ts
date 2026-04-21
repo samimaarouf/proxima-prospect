@@ -8,12 +8,87 @@ export type MinimalOffer = {
   offerUrl: string | null | undefined;
 };
 
+/**
+ * Lowercase + Unicode NFD + strip combining marks so that é/É/e all match.
+ */
+function stripDiacritics(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Normalize a company name so variants collapse together:
+ *   "Médiaperformances"  → "mediaperformances"
+ *   "MÉDIA PERFORMANCES" → "mediaperformances"
+ *   "Mediaperformances SAS." → "mediaperformances"
+ */
+const COMPANY_SUFFIXES = [
+  "sas",
+  "sasu",
+  "sarl",
+  "sa",
+  "eurl",
+  "sci",
+  "snc",
+  "llc",
+  "ltd",
+  "inc",
+  "corp",
+  "corporation",
+  "gmbh",
+  "bv",
+  "ag",
+  "plc",
+  "group",
+  "groupe",
+  "holding",
+];
+
 export function normalizeCompany(name: string | null | undefined): string {
-  return (name || "").trim().toLowerCase();
+  if (!name) return "";
+  let s = stripDiacritics(String(name)).toLowerCase();
+  // If the name contains a tagline separator (|, – / — / tiret, :, etc.)
+  // keep only the part before it: "Pixalione | SEO, Paid, IA" → "Pixalione".
+  s = s.split(/[|•·–—:]/)[0] ?? s;
+  // Replace punctuation and separators by spaces, then collapse.
+  s = s.replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+  if (!s) return "";
+  const tokens = s.split(" ").filter(Boolean);
+  // Strip trailing legal-form tokens (repeatedly, in case of "sas group").
+  while (tokens.length > 1 && COMPANY_SUFFIXES.includes(tokens[tokens.length - 1])) {
+    tokens.pop();
+  }
+  // Collapse everything for the final key (so "media performances" ==
+  // "mediaperformances"). This is aggressive but exactly what we want for
+  // same-company detection across sloppily-typed imports.
+  return tokens.join("");
+}
+
+/**
+ * Returns true when two company names refer to the same company, even in the
+ * presence of taglines or extra descriptors.
+ *
+ *   "Pixalione" ≡ "PIXALIONE | SEO, Paid, IA, Data & CRO"
+ *   "Médiaperformances" ≡ "Mediaperformances SAS"
+ *
+ * We consider a prefix match only when the shorter key is at least 5 chars,
+ * to avoid false positives like "Air France" ≡ "Air Liquide".
+ */
+export function companyMatches(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const ka = normalizeCompany(a);
+  const kb = normalizeCompany(b);
+  if (!ka || !kb) return false;
+  if (ka === kb) return true;
+  const [shorter, longer] = ka.length <= kb.length ? [ka, kb] : [kb, ka];
+  return shorter.length >= 5 && longer.startsWith(shorter);
 }
 
 export function normalizeTitle(title: string | null | undefined): string {
-  return (title || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!title) return "";
+  const s = stripDiacritics(String(title)).toLowerCase();
+  return s.replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
 }
 
 export function normalizeUrl(url: string | null | undefined): string {
@@ -39,12 +114,11 @@ export function isSameOffer(a: MinimalOffer, b: MinimalOffer): boolean {
   const urlA = normalizeUrl(a.offerUrl);
   const urlB = normalizeUrl(b.offerUrl);
   if (urlA && urlB) return urlA === urlB;
-  const companyA = normalizeCompany(a.companyName);
-  const companyB = normalizeCompany(b.companyName);
   const titleA = normalizeTitle(a.offerTitle);
   const titleB = normalizeTitle(b.offerTitle);
-  if (!companyA || !companyB || !titleA || !titleB) return false;
-  return companyA === companyB && titleA === titleB;
+  if (!titleA || !titleB) return false;
+  if (titleA !== titleB) return false;
+  return companyMatches(a.companyName, b.companyName);
 }
 
 /**
@@ -56,6 +130,7 @@ export async function loadUserOffers(userId: string) {
     .select({
       id: prospectOffer.id,
       listId: prospectOffer.listId,
+      listName: prospectList.name,
       companyName: prospectOffer.companyName,
       offerTitle: prospectOffer.offerTitle,
       offerUrl: prospectOffer.offerUrl,
@@ -65,21 +140,37 @@ export async function loadUserOffers(userId: string) {
     .where(eq(prospectList.userId, userId));
 }
 
+export type UserOffer = Awaited<ReturnType<typeof loadUserOffers>>[number];
+
+/**
+ * Among `pool`, returns the offers that refer to the SAME company as `target`
+ * but to a DIFFERENT offer (so we can flag them as yellow / show links).
+ */
+export function findDuplicateOffers<T extends MinimalOffer & { id: string }>(
+  target: T,
+  pool: T[],
+): T[] {
+  return pool.filter(
+    (o) =>
+      o.id !== target.id &&
+      companyMatches(o.companyName, target.companyName) &&
+      !isSameOffer(o, target),
+  );
+}
+
 /**
  * Build a fast lookup index for existing offers.
- * Returns a checker that answers "does this offer already exist?" plus an
- * `add` helper so the index can grow as new rows are imported.
+ * URL matches are indexed (O(1)); company+title matches fall back to a linear
+ * scan because company matching is fuzzy (prefix).
  */
 export function buildOfferIndex(offers: Iterable<MinimalOffer> = []) {
   const urlSet = new Set<string>();
-  const companyTitleSet = new Set<string>();
+  const pool: MinimalOffer[] = [];
 
   function add(o: MinimalOffer) {
     const url = normalizeUrl(o.offerUrl);
     if (url) urlSet.add(url);
-    const c = normalizeCompany(o.companyName);
-    const t = normalizeTitle(o.offerTitle);
-    if (c && t) companyTitleSet.add(`${c}||${t}`);
+    pool.push(o);
   }
 
   for (const o of offers) add(o);
@@ -90,10 +181,7 @@ export function buildOfferIndex(offers: Iterable<MinimalOffer> = []) {
     hasMatch(input: MinimalOffer): boolean {
       const url = normalizeUrl(input.offerUrl);
       if (url && urlSet.has(url)) return true;
-      const c = normalizeCompany(input.companyName);
-      const t = normalizeTitle(input.offerTitle);
-      if (c && t && companyTitleSet.has(`${c}||${t}`)) return true;
-      return false;
+      return pool.some((o) => isSameOffer(o, input));
     },
   };
 }

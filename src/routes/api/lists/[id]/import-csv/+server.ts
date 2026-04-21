@@ -85,12 +85,31 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   let skipped = 0;
   let duplicates = 0;
 
+  // Case-insensitive column accessor (CSV exports often have varying casing
+  // like "URL Offre" vs "URL offre", "LinkedIn CEO" vs "LinkedIn CEO/Fondateur").
+  function pick(row: Record<string, string>, ...candidates: string[]): string {
+    const keys = Object.keys(row);
+    for (const c of candidates) {
+      const target = c.trim().toLowerCase();
+      const key = keys.find((k) => k.trim().toLowerCase() === target);
+      if (key && row[key]) return row[key];
+    }
+    return "";
+  }
+
   for (const row of rows) {
-    const companyName = row["Entreprise"] || row["Company"] || "";
-    const offerTitle = row["Exemple d'offre"] || row["Offre"] || row["Intitulé du poste"] || "";
-    const offerUrl = row["URL offre"] || row["Domaine"] || row["Domain"] || null;
-    const linkedinCeo = row["LinkedIn CEO/Fondateur"] || row["LinkedIn"] || "";
-    const localisation = row["Localisation"] || row["Ville"] || null;
+    const companyName = pick(row, "Entreprise", "Company");
+    const offerTitle = pick(row, "Exemple d'offre", "Offre", "Intitulé du poste");
+    const offerUrl = pick(row, "URL Offre", "URL offre", "Offer URL") || null;
+    const linkedinCeo = pick(
+      row,
+      "LinkedIn CEO/Fondateur",
+      "LinkedIn CEO",
+      "LinkedIn Fondateur",
+      "LinkedIn Founder",
+      "LinkedIn",
+    );
+    const localisation = pick(row, "Localisation", "Ville", "Location") || null;
 
     if (!companyName) { skipped++; continue; }
 

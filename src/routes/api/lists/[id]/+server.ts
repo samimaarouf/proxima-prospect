@@ -3,7 +3,7 @@ import { db } from "$lib/server/db";
 import { prospectList, prospectOffer, prospectContact } from "$lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
-import { isSameOffer, loadUserOffers, normalizeCompany } from "$lib/server/offerMatch";
+import { findDuplicateOffers, loadUserOffers } from "$lib/server/offerMatch";
 
 export const GET: RequestHandler = async ({ locals, params }) => {
   if (!locals.user) {
@@ -27,22 +27,16 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 
   // Flag rows where the same company exists elsewhere with a different offer.
   const allUserOffers = await loadUserOffers(locals.user.id);
-  const offersByCompany = new Map<string, typeof allUserOffers>();
-  for (const o of allUserOffers) {
-    const key = normalizeCompany(o.companyName);
-    if (!key) continue;
-    const arr = offersByCompany.get(key) || [];
-    arr.push(o);
-    offersByCompany.set(key, arr);
-  }
-
   const offers = offersRaw.map((o) => {
-    const key = normalizeCompany(o.companyName);
-    const siblings = key ? offersByCompany.get(key) || [] : [];
-    const hasOtherOffer = siblings.some(
-      (s) => s.id !== o.id && !isSameOffer(s, o),
-    );
-    return { ...o, hasOtherOffer };
+    const duplicates = findDuplicateOffers(o, allUserOffers).map((d) => ({
+      id: d.id,
+      listId: d.listId,
+      listName: d.listName,
+      offerTitle: d.offerTitle,
+      offerUrl: d.offerUrl,
+      companyName: d.companyName,
+    }));
+    return { ...o, hasOtherOffer: duplicates.length > 0, duplicateOffers: duplicates };
   });
 
   const offerIds = offers.map((o) => o.id);
