@@ -25,10 +25,12 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     .from(prospectOffer)
     .where(eq(prospectOffer.listId, params.id));
 
-  // Flag rows where the same company exists elsewhere with a different offer.
+  // Flag rows where the same company exists in ANOTHER list (same-list
+  // matches are shown via the "N offres" group badge instead of yellow).
   const allUserOffers = await loadUserOffers(locals.user.id);
+  const otherListOffers = allUserOffers.filter((o) => o.listId !== params.id);
   const offers = offersRaw.map((o) => {
-    const duplicates = findDuplicateOffers(o, allUserOffers).map((d) => ({
+    const duplicates = findDuplicateOffers(o, otherListOffers).map((d) => ({
       id: d.id,
       listId: d.listId,
       listName: d.listName,

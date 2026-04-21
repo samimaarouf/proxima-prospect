@@ -4,6 +4,8 @@
   import { toast } from "svelte-sonner";
   import AgGrid from "$lib/components/custom/AgGrid/AgGrid.svelte";
   import OfferSheet from "$lib/components/OfferSheet.svelte";
+  import CompanySheet from "$lib/components/CompanySheet.svelte";
+  import { normalizeCompany } from "$lib/offerMatch";
   import type { PageData } from "./$types";
   import type {
     GridOptions,
@@ -27,6 +29,7 @@
   let showImportDialog = $state(false);
   let selectedOfferForSheet = $state<Offer | null>(null);
   let showOfferSheet = $state(false);
+  let companySheetName = $state<string | null>(null);
   let importFile = $state<File | null>(null);
   let importing = $state(false);
   let autoEnriching = $state(false);
@@ -64,6 +67,76 @@
     }))
   );
 
+  /**
+   * Group offers by normalized company so multiple offers for the same
+   * company show up as a single row in the grid, with a "N offres" badge.
+   * The group id is the id of the first offer (for AG-Grid row identity);
+   * `offerIds` keeps the full list and `isGroup` marks multi-offer rows.
+   */
+  type GroupRow = {
+    id: string;
+    /** All offer ids in the group (same order as `offers`). */
+    offerIds: string[];
+    /** True when more than one offer shares the company. */
+    isGroup: boolean;
+    /** Total offers in the group (== offerIds.length). */
+    offerCount: number;
+    companyName: string;
+    offerTitle: string | null;
+    offerUrl: string | null;
+    offerLocation: string | null;
+    /** Null when at least one offer is active; Date when ALL offers are disabled. */
+    disabledAt: Date | string | null;
+    /** True when the group has matches in OTHER lists (cross-list warning). */
+    hasOtherOffer: boolean;
+    contactCount: number;
+    /** All titles in the group, for hover / secondary display. */
+    allTitles: string[];
+    /** Individual offers kept for downstream actions. */
+    offers: typeof offersWithCount;
+  };
+
+  const groupedRows: GroupRow[] = $derived.by(() => {
+    const byKey = new Map<string, GroupRow>();
+    for (const o of offersWithCount) {
+      const key = normalizeCompany(o.companyName) || o.id;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, {
+          id: o.id,
+          offerIds: [o.id],
+          isGroup: false,
+          offerCount: 1,
+          companyName: o.companyName,
+          offerTitle: o.offerTitle,
+          offerUrl: o.offerUrl,
+          offerLocation: o.offerLocation,
+          disabledAt: o.disabledAt,
+          hasOtherOffer: !!(o as any).hasOtherOffer,
+          contactCount: o.contactCount,
+          allTitles: [o.offerTitle || "(sans titre)"],
+          offers: [o],
+        });
+      } else {
+        existing.offerIds.push(o.id);
+        existing.isGroup = true;
+        existing.offerCount = existing.offerIds.length;
+        existing.contactCount += o.contactCount;
+        existing.allTitles.push(o.offerTitle || "(sans titre)");
+        existing.offers.push(o);
+        // Prefer the longest known variant for display (often the fully
+        // qualified name coming from Coresignal / LinkedIn vs sloppy imports).
+        if ((o.companyName?.length || 0) > existing.companyName.length) {
+          existing.companyName = o.companyName;
+        }
+        // Group stays "disabled" only when EVERY offer is disabled.
+        if (!o.disabledAt) existing.disabledAt = null;
+        if ((o as any).hasOtherOffer) existing.hasOtherOffer = true;
+      }
+    }
+    return [...byKey.values()];
+  });
+
   // Contacts for selected offer
   const selectedOfferContacts = $derived(
     selectedOfferForSheet ? (contactsByOffer[selectedOfferForSheet.id] || []) : []
@@ -77,10 +150,11 @@
       {
         field: "companyName",
         headerName: "Entreprise",
-        width: 200,
+        width: 220,
         pinned: "left",
         cellRenderer: (params: ICellRendererParams) => {
           const name = params.value as string;
+          const offerCount = (params.data?.offerCount as number) || 1;
           const div = document.createElement("div");
           div.style.display = "flex";
           div.style.alignItems = "center";
@@ -105,8 +179,19 @@
           const nameEl = document.createElement("span");
           nameEl.style.fontWeight = "600";
           nameEl.style.fontSize = "0.875rem";
+          nameEl.style.overflow = "hidden";
+          nameEl.style.textOverflow = "ellipsis";
+          nameEl.style.whiteSpace = "nowrap";
           nameEl.textContent = name || "—";
           div.appendChild(nameEl);
+
+          if (offerCount > 1) {
+            const badge = document.createElement("span");
+            badge.style.cssText =
+              "display:inline-flex;align-items:center;gap:3px;flex-shrink:0;padding:2px 7px;border-radius:9999px;background:#eef2ff;color:#4338ca;font-size:0.7rem;font-weight:600;border:1px solid #c7d2fe;";
+            badge.textContent = `${offerCount} offres`;
+            div.appendChild(badge);
+          }
 
           return div;
         },
@@ -116,9 +201,35 @@
         headerName: "Intitulé du poste",
         flex: 1,
         minWidth: 200,
+        // Quick filter needs to see every title in a group, not just the first,
+        // so searching "SDR" matches a company even if only the 2nd offer is SDR.
+        getQuickFilterText: (params) => {
+          const titles = (params.data?.allTitles as string[] | undefined) || [];
+          return titles.length ? titles.join(" ") : params.value ?? "";
+        },
         cellRenderer: (params: ICellRendererParams) => {
           const title = params.value as string | null;
           const offerUrl = params.data?.offerUrl as string | null;
+          const isGroup = !!params.data?.isGroup;
+          const allTitles = (params.data?.allTitles as string[]) || [];
+
+          if (isGroup) {
+            const wrap = document.createElement("div");
+            wrap.style.cssText =
+              "display:flex;flex-direction:column;gap:2px;padding:4px 0;line-height:1.25;";
+            const head = document.createElement("span");
+            head.style.cssText =
+              "font-size:0.75rem;color:#6b7280;font-weight:500;";
+            head.textContent = `${allTitles.length} offres pour cette entreprise`;
+            wrap.appendChild(head);
+            const list = document.createElement("span");
+            list.style.cssText =
+              "font-size:0.8125rem;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+            list.textContent = allTitles.join(" · ");
+            list.title = allTitles.join("\n");
+            wrap.appendChild(list);
+            return wrap;
+          }
 
           if (!title && !offerUrl) {
             const span = document.createElement("span");
@@ -230,7 +341,8 @@
         suppressMovable: true,
         cellRenderer: (params: ICellRendererParams) => {
           const offerUrl = params.data?.offerUrl as string | null;
-          if (!offerUrl) return "";
+          const isGroup = !!params.data?.isGroup;
+          if (isGroup || !offerUrl) return "";
 
           const btn = document.createElement("button");
           btn.title = "Re-scraper l'URL pour extraire titre et localisation";
@@ -253,6 +365,8 @@
         resizable: false,
         suppressMovable: true,
         cellRenderer: (params: ICellRendererParams) => {
+          const isGroup = !!params.data?.isGroup;
+          if (isGroup) return "";
           const disabled = !!params.data?.disabledAt;
           const btn = document.createElement("button");
           btn.title = disabled ? "Réactiver l'offre" : "Désactiver l'offre";
@@ -277,6 +391,8 @@
         resizable: false,
         suppressMovable: true,
         cellRenderer: (params: ICellRendererParams) => {
+          const isGroup = !!params.data?.isGroup;
+          if (isGroup) return "";
           const btn = document.createElement("button");
           btn.title = "Supprimer l'offre";
           btn.style.cssText = "display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid #fee2e2;background:transparent;cursor:pointer;transition:background 0.15s;";
@@ -399,7 +515,13 @@
 
   function handleRowClicked(event: RowClickedEvent) {
     const target = event.event?.target as HTMLElement;
-    if (target?.closest("a")) return;
+    if (target?.closest("a") || target?.closest("button")) return;
+    // Multi-offer rows: open the company sheet (aggregated view).  Single-offer
+    // rows behave like before and drop into the offer sheet directly.
+    if (event.data?.isGroup && event.data?.companyName) {
+      companySheetName = event.data.companyName;
+      return;
+    }
     const offer = offers.find((o) => o.id === event.data?.id);
     if (offer) {
       selectedOfferForSheet = offer;
@@ -706,7 +828,7 @@
     </div>
     <div class="flex items-center gap-3 flex-shrink-0">
       <span class="text-sm text-muted-foreground">
-        {offers.length} offre{offers.length !== 1 ? "s" : ""} · {totalContacts} contact{totalContacts !== 1 ? "s" : ""}
+        {groupedRows.length} entreprise{groupedRows.length !== 1 ? "s" : ""} · {offers.length} offre{offers.length !== 1 ? "s" : ""} · {totalContacts} contact{totalContacts !== 1 ? "s" : ""}
       </span>
       <button
         onclick={handleExport}
@@ -760,7 +882,7 @@
   {:else}
     <div class="grid-container" style="height: {gridHeight}px;">
       <AgGrid
-        rowData={offersWithCount}
+        rowData={groupedRows}
         {gridOptions}
         quickFilterText={quickFilter}
         gridStyle="height: 100%;"
@@ -789,6 +911,28 @@
     onOfferUpdated={(updated) => { updateOffer(updated); selectedOfferForSheet = { ...selectedOfferForSheet!, ...updated }; }}
     {isLinkedInEnabled}
     fullenrichEnabled={isFullenrichEnabled}
+  />
+{/if}
+
+<!-- Company Sheet (aggregated view for same-company multi-offer rows) -->
+{#if companySheetName}
+  <CompanySheet
+    companyName={companySheetName}
+    onClose={() => (companySheetName = null)}
+    onOfferClick={(o) => {
+      companySheetName = null;
+      // Open in the same tab when the offer lives in the current list; fall
+      // back to a new tab for cross-list navigation.
+      if (o.listId === list.id) {
+        const match = offers.find((off) => off.id === o.id);
+        if (match) {
+          selectedOfferForSheet = match;
+          showOfferSheet = true;
+          return;
+        }
+      }
+      window.open(`/lists/${o.listId}?offer=${o.id}`, "_blank");
+    }}
   />
 {/if}
 

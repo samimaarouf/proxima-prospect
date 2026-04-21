@@ -27,13 +27,15 @@ export const load: PageServerLoad = async ({ locals, params }) => {
     .from(prospectOffer)
     .where(eq(prospectOffer.listId, params.id));
 
-  // Flag offers where the same company also exists in the user's data with a
-  // DIFFERENT offer (angle/URL) — the UI paints those rows yellow as a warning
-  // and the sidesheet lists the duplicate offers with a direct link.
+  // Flag offers where the same company also exists in ANOTHER list — the UI
+  // paints those rows yellow as a warning and the sidesheet lists the
+  // duplicate offers with a direct link.  Matches inside the same list are
+  // already surfaced via the "N offres" group badge, so we filter them out.
   const allUserOffers = await loadUserOffers(locals.user.id);
+  const otherListOffers = allUserOffers.filter((o) => o.listId !== params.id);
 
   const offers = offersRaw.map((o) => {
-    const duplicates = findDuplicateOffers(o, allUserOffers).map((d) => ({
+    const duplicates = findDuplicateOffers(o, otherListOffers).map((d) => ({
       id: d.id,
       listId: d.listId,
       listName: d.listName,
