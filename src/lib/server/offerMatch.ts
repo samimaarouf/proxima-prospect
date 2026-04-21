@@ -144,17 +144,19 @@ export type UserOffer = Awaited<ReturnType<typeof loadUserOffers>>[number];
 
 /**
  * Among `pool`, returns the offers that refer to the SAME company as `target`
- * but to a DIFFERENT offer (so we can flag them as yellow / show links).
+ * (excluding the target itself).  Used to flag yellow rows and populate the
+ * "duplicates" block in the offer sheet.  We include offers that are the
+ * exact same (same URL or same title) because the user wants to be warned
+ * about any cross-list presence of the company — same-offer duplicates are
+ * often a sign the list was re-imported or recovered.
  */
-export function findDuplicateOffers<T extends MinimalOffer & { id: string }>(
-  target: T,
-  pool: T[],
-): T[] {
+export function findDuplicateOffers<
+  T extends MinimalOffer & { id: string },
+  P extends MinimalOffer & { id: string },
+>(target: T, pool: P[]): P[] {
   return pool.filter(
     (o) =>
-      o.id !== target.id &&
-      companyMatches(o.companyName, target.companyName) &&
-      !isSameOffer(o, target),
+      o.id !== target.id && companyMatches(o.companyName, target.companyName),
   );
 }
 

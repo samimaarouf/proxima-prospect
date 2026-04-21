@@ -68,13 +68,24 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     return json({ error: "Profil utilisateur introuvable" }, { status: 404 });
   }
 
-  // Fetch offer info for history context
+  // Fetch offer info for history context (+ archive guard)
   const offerRows = await db
-    .select({ offerTitle: prospectOffer.offerTitle, companyName: prospectOffer.companyName })
+    .select({
+      offerTitle: prospectOffer.offerTitle,
+      companyName: prospectOffer.companyName,
+      disabledAt: prospectOffer.disabledAt,
+    })
     .from(prospectOffer)
     .where(eq(prospectOffer.id, contact.offerId))
     .limit(1);
   const offer = offerRows[0];
+
+  if (offer?.disabledAt) {
+    return json(
+      { error: "Cette offre est désactivée — réactivez-la pour envoyer des messages." },
+      { status: 409 },
+    );
+  }
 
   const unipile = new UnipileService();
   let resolvedRecipient: string | undefined = recipientOverride;

@@ -17,6 +17,7 @@
     offerUrl: string | null;
     offerLocation: string | null;
     offerContent: string | null;
+    disabledAt?: string | Date | null;
     duplicateOffers?: DuplicateOffer[];
   };
 
@@ -50,6 +51,7 @@
     onContactDeleted,
     onOfferScraped,
     onOfferDeleted,
+    onOfferUpdated,
     isLinkedInEnabled = false,
     fullenrichEnabled = false,
   }: {
@@ -62,9 +64,33 @@
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onOfferScraped?: (updated: any) => void;
     onOfferDeleted?: (offerId: string) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onOfferUpdated?: (updated: any) => void;
     isLinkedInEnabled?: boolean;
     fullenrichEnabled?: boolean;
   } = $props();
+
+  let isDisabled = $derived(!!offer.disabledAt);
+  let togglingDisabled = $state(false);
+
+  async function toggleDisabled() {
+    togglingDisabled = true;
+    try {
+      const res = await fetch(`/api/offers/${offer.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disabled: !isDisabled }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erreur");
+      onOfferUpdated?.(data);
+      toast.success(data.disabledAt ? "Offre désactivée" : "Offre réactivée");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      togglingDisabled = false;
+    }
+  }
 
   type HistoryEntry = {
     id: string;
@@ -799,7 +825,14 @@
 ></div>
 
 <!-- Sheet panel -->
-<div class="fixed right-0 top-0 h-full w-full max-w-2xl bg-background border-l border-border shadow-2xl z-50 flex flex-col overflow-hidden">
+<div class="fixed right-0 top-0 h-full w-full max-w-2xl bg-background border-l border-border shadow-2xl z-50 flex flex-col overflow-hidden {isDisabled ? 'offer-sheet-disabled' : ''}">
+
+  {#if isDisabled}
+    <div class="flex items-center gap-2 px-6 py-2 bg-gray-100 border-b border-gray-200 text-xs text-gray-600 flex-shrink-0">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+      <span>Cette offre est désactivée — ses contacts sont masqués du CRM et l'envoi est bloqué.</span>
+    </div>
+  {/if}
 
   <!-- Header -->
   <div class="flex items-start justify-between px-6 py-5 border-b border-border bg-card flex-shrink-0">
@@ -861,8 +894,8 @@
               <line x1="12" y1="17" x2="12.01" y2="17"/>
             </svg>
             {offer.duplicateOffers.length === 1
-              ? "Une autre offre existe déjà pour cette entreprise"
-              : `${offer.duplicateOffers.length} autres offres existent pour cette entreprise`}
+              ? "Cette entreprise est aussi présente dans une autre liste"
+              : `Cette entreprise est aussi présente dans ${offer.duplicateOffers.length} autres listes`}
           </div>
           <ul class="space-y-1">
             {#each offer.duplicateOffers as dup (dup.id)}
@@ -892,6 +925,23 @@
       {/if}
     </div>
     <div class="flex items-center gap-1 ml-4 flex-shrink-0">
+      <button
+        onclick={toggleDisabled}
+        disabled={togglingDisabled}
+        aria-label={isDisabled ? "Réactiver l'offre" : "Désactiver l'offre"}
+        title={isDisabled ? "Réactiver l'offre (elle réapparaîtra dans le CRM)" : "Désactiver l'offre (elle sera grisée et exclue du CRM)"}
+        class="inline-flex items-center gap-1.5 px-2 py-1 text-xs border rounded-md transition-colors disabled:opacity-50 {isDisabled ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' : 'border-input text-muted-foreground hover:bg-accent'}"
+      >
+        {#if togglingDisabled}
+          <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+        {:else if isDisabled}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Réactiver
+        {:else}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+          Désactiver
+        {/if}
+      </button>
       {#if onOfferDeleted}
         <button
           onclick={() => onOfferDeleted!(offer.id)}
@@ -1666,3 +1716,11 @@
     </div>
   </div>
 {/if}
+
+<style>
+  /* Subtle grayscale on disabled offer sheet so the whole panel reads as "archived".
+     Header/banner/close buttons stay clickable — we only desaturate visuals. */
+  :global(.offer-sheet-disabled) {
+    filter: grayscale(0.7);
+  }
+</style>

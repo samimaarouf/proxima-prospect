@@ -88,7 +88,7 @@
     domLayout: gridStyle ? undefined : "normal",
     pagination: rowModelType === "clientSide",
     paginationPageSize: nbRows,
-    paginationPageSizeSelector: [1, 5, 10],
+    paginationPageSizeSelector: [10, 20, 50, 100],
     cacheBlockSize: rowModelType === "infinite" ? nbRows : undefined,
     loading: isInitialLoad && rowModelType === "clientSide",
 

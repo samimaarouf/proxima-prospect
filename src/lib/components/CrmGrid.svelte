@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { toast } from "svelte-sonner";
   import AgGrid from "$lib/components/custom/AgGrid/AgGrid.svelte";
+  import CompanySheet from "$lib/components/CompanySheet.svelte";
   import {
     STATUS_OPTIONS,
     resolveStatus,
@@ -31,6 +32,7 @@
     offerTitle: string | null;
     offerUrl: string | null;
     companyName: string;
+    offerDisabledAt: string | null;
     listId: string;
     listName: string;
     emailSentAt: string | null;
@@ -67,6 +69,9 @@
   let rows = $state<CrmRow[]>([]);
   let loading = $state(true);
   let quickFilter = $state("");
+
+  // Company sheet (opened by clicking on an offer row)
+  let companySheetName = $state<string | null>(null);
 
   // ===========================
   // Popup states
@@ -514,7 +519,8 @@
     if (!row) return "";
     const div = document.createElement("div");
     div.style.cssText =
-      "display:flex;align-items:center;gap:8px;height:100%;min-width:0;";
+      "display:flex;align-items:center;gap:8px;height:100%;min-width:0;cursor:pointer;";
+    div.title = `Voir la fiche entreprise : ${row.companyName || ""}`;
 
     const avatar = document.createElement("div");
     avatar.style.cssText =
@@ -522,20 +528,22 @@
     avatar.textContent = (row.companyName || "?")[0].toUpperCase();
     div.appendChild(avatar);
 
+    const name = document.createElement("span");
+    name.style.cssText =
+      "font-size:0.8125rem;font-weight:500;color:#1f2937;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;";
+    name.textContent = row.companyName || "—";
+    div.appendChild(name);
+
+    // Keep a quick way to jump to LinkedIn's company search without hijacking
+    // the cell click (which now opens the company sheet).
     const link = document.createElement("a");
     link.href = companyLinkedinSearchUrl(row.companyName);
     link.target = "_blank";
     link.rel = "noopener noreferrer";
-    link.title = `Ouvrir ${row.companyName || "l'entreprise"} sur LinkedIn`;
+    link.title = `Chercher ${row.companyName || "l'entreprise"} sur LinkedIn`;
     link.style.cssText =
-      "font-size:0.8125rem;font-weight:500;color:#1f2937;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
-    link.textContent = row.companyName || "—";
-    link.addEventListener("mouseenter", () => {
-      link.style.textDecoration = "underline";
-    });
-    link.addEventListener("mouseleave", () => {
-      link.style.textDecoration = "none";
-    });
+      "display:inline-flex;align-items:center;flex-shrink:0;padding:2px;border-radius:4px;";
+    link.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="#0a66c2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>`;
     link.addEventListener("click", (e) => e.stopPropagation());
     div.appendChild(link);
 
@@ -546,27 +554,33 @@
     const row = params.data;
     if (!row) return "";
     const title = row.offerTitle || "(Sans titre)";
-    const hasUrl = !!row.offerUrl;
-    const el = document.createElement("a");
-    el.href = row.offerUrl || `/lists/${row.listId}`;
-    if (hasUrl) {
-      el.target = "_blank";
-      el.rel = "noopener noreferrer";
-      el.title = `Ouvrir l'offre : ${title}`;
-    } else {
-      el.title = title;
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText =
+      "display:flex;align-items:center;gap:6px;height:100%;min-width:0;cursor:pointer;";
+    wrapper.title = `Voir la fiche entreprise : ${row.companyName || title}`;
+
+    const text = document.createElement("span");
+    text.style.cssText =
+      "font-size:0.8125rem;font-weight:500;color:#1f2937;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;";
+    text.textContent = title;
+    wrapper.appendChild(text);
+
+    // External-link icon keeps the "open the source URL" affordance without
+    // hijacking the cell click, which now opens the company sheet.
+    if (row.offerUrl) {
+      const ext = document.createElement("a");
+      ext.href = row.offerUrl;
+      ext.target = "_blank";
+      ext.rel = "noopener noreferrer";
+      ext.title = "Ouvrir l'URL de l'offre";
+      ext.style.cssText =
+        "display:inline-flex;align-items:center;color:#6366f1;flex-shrink:0;padding:2px;border-radius:4px;";
+      ext.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+      ext.addEventListener("click", (e) => e.stopPropagation());
+      wrapper.appendChild(ext);
     }
-    el.style.cssText =
-      "font-size:0.8125rem;font-weight:500;color:#1f2937;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;max-width:100%;";
-    el.textContent = title;
-    el.addEventListener("mouseenter", () => {
-      el.style.textDecoration = "underline";
-    });
-    el.addEventListener("mouseleave", () => {
-      el.style.textDecoration = "none";
-    });
-    el.addEventListener("click", (e) => e.stopPropagation());
-    return el;
+
+    return wrapper;
   }
 
   function makeDateRenderer(field: DateField) {
@@ -873,13 +887,24 @@
     rowHeight: 52,
     getRowId: (params) => params.data.id,
     rowClassRules: {
-      "crm-row-green": (params) => isRdvScheduled(params.data),
+      "crm-row-disabled": (params) => !!params.data?.offerDisabledAt,
+      "crm-row-green": (params) =>
+        !params.data?.offerDisabledAt && isRdvScheduled(params.data),
       "crm-row-red": (params) =>
-        !isRdvScheduled(params.data) && needsAction(params.data),
+        !params.data?.offerDisabledAt &&
+        !isRdvScheduled(params.data) &&
+        needsAction(params.data),
     },
     onCellClicked: (event: CellClickedEvent<CrmRow>) => {
       const colId = event.colDef.colId || event.colDef.field;
       if (!colId || !event.data) return;
+      // Ignore clicks that landed on nested links/buttons inside a cell
+      // (e.g. the "open URL" icon in the offer cell, the LinkedIn search icon
+      // in the company cell). Those handlers already stopPropagation, so the
+      // guard here is belt-and-suspenders.
+      const target = event.event?.target as HTMLElement | undefined;
+      if (target?.closest("a")) return;
+
       if (DATE_FIELDS.has(colId)) {
         openDateEditPopup(event.data, colId as DateField);
       } else if (colId === "nextStep") {
@@ -888,6 +913,10 @@
         openStatusEditPopup(event.data);
       } else if (colId === "notes") {
         openNotesEditPopup(event.data);
+      } else if (colId === "offerTitle" || colId === "companyName") {
+        if (event.data.companyName) {
+          companySheetName = event.data.companyName;
+        }
       }
     },
   };
@@ -1295,6 +1324,17 @@
   </div>
 {/if}
 
+{#if companySheetName}
+  <CompanySheet
+    companyName={companySheetName}
+    onClose={() => (companySheetName = null)}
+    onOfferClick={(offer) => {
+      // Jump into the offer's list page, pre-opening the OfferSheet via ?offer=.
+      window.open(`/lists/${offer.listId}?offer=${offer.id}`, "_blank");
+    }}
+  />
+{/if}
+
 <style>
   .crm-root {
     display: flex;
@@ -1604,6 +1644,23 @@
   :global(.ag-row.crm-row-green.ag-row-hover),
   :global(.ag-row.crm-row-green.ag-row-hover .ag-cell) {
     background-color: #bbf7d0 !important;
+  }
+
+  /* Disabled / archived offers: contact stays visible for history but is
+     washed out to make it clear nothing more should be sent. */
+  :global(.ag-row.crm-row-disabled),
+  :global(.ag-row.crm-row-disabled .ag-cell) {
+    background-color: #f3f4f6 !important;
+    color: #9ca3af !important;
+    opacity: 0.85;
+  }
+  :global(.ag-row.crm-row-disabled .ag-cell a),
+  :global(.ag-row.crm-row-disabled .ag-cell span) {
+    color: #9ca3af !important;
+  }
+  :global(.ag-row.crm-row-disabled.ag-row-hover),
+  :global(.ag-row.crm-row-disabled.ag-row-hover .ag-cell) {
+    background-color: #e5e7eb !important;
   }
 
   .next-step-tags {

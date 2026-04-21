@@ -253,6 +253,30 @@
         resizable: false,
         suppressMovable: true,
         cellRenderer: (params: ICellRendererParams) => {
+          const disabled = !!params.data?.disabledAt;
+          const btn = document.createElement("button");
+          btn.title = disabled ? "Réactiver l'offre" : "Désactiver l'offre";
+          btn.style.cssText = "display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid #e5e7eb;background:transparent;cursor:pointer;transition:background 0.15s;";
+          btn.innerHTML = disabled
+            ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>`
+            : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>`;
+          btn.addEventListener("mouseenter", () => { btn.style.background = "#f3f4f6"; });
+          btn.addEventListener("mouseleave", () => { btn.style.background = "transparent"; });
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            handleToggleOfferDisabled(params.data?.id);
+          });
+          return btn;
+        },
+      },
+      {
+        headerName: "",
+        width: 48,
+        sortable: false,
+        filter: false,
+        resizable: false,
+        suppressMovable: true,
+        cellRenderer: (params: ICellRendererParams) => {
           const btn = document.createElement("button");
           btn.title = "Supprimer l'offre";
           btn.style.cssText = "display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid #fee2e2;background:transparent;cursor:pointer;transition:background 0.15s;";
@@ -267,6 +291,26 @@
         },
       },
     ];
+  }
+
+  async function handleToggleOfferDisabled(offerId: string) {
+    if (!offerId) return;
+    const current = offers.find((o) => o.id === offerId);
+    if (!current) return;
+    const willDisable = !current.disabledAt;
+    try {
+      const res = await fetch(`/api/offers/${offerId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disabled: willDisable }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erreur");
+      updateOffer(data);
+      toast.success(data.disabledAt ? "Offre désactivée" : "Offre réactivée");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    }
   }
 
   let scrapingOfferId = $state<string | null>(null);
@@ -347,7 +391,8 @@
     rowHeight: 52,
     rowClass: "cursor-pointer",
     rowClassRules: {
-      "offer-row-yellow": (params) => !!params.data?.hasOtherOffer,
+      "offer-row-yellow": (params) => !!params.data?.hasOtherOffer && !params.data?.disabledAt,
+      "offer-row-disabled": (params) => !!params.data?.disabledAt,
     },
     onRowClicked: handleRowClicked,
   };
@@ -581,7 +626,7 @@
   }
 
   // Grid height state
-  let gridHeight = $state(500);
+  let gridHeight = $state(800);
   let isResizing = $state(false);
   let resizeStartY = $state(0);
   let resizeStartH = $state(0);
@@ -596,7 +641,7 @@
 
   function onResize(e: MouseEvent) {
     if (!isResizing) return;
-    gridHeight = Math.max(200, Math.min(900, resizeStartH + (e.clientY - resizeStartY)));
+    gridHeight = Math.max(200, Math.min(1800, resizeStartH + (e.clientY - resizeStartY)));
   }
 
   function stopResize() {
@@ -719,6 +764,7 @@
         {gridOptions}
         quickFilterText={quickFilter}
         gridStyle="height: 100%;"
+        nbRows={20}
       />
       <button
         class="resize-handle"
@@ -740,6 +786,7 @@
     onContactDeleted={handleContactDeleted}
     onOfferScraped={(updated) => { updateOffer(updated); selectedOfferForSheet = { ...selectedOfferForSheet!, ...updated }; }}
     onOfferDeleted={handleDeleteOffer}
+    onOfferUpdated={(updated) => { updateOffer(updated); selectedOfferForSheet = { ...selectedOfferForSheet!, ...updated }; }}
     {isLinkedInEnabled}
     fullenrichEnabled={isFullenrichEnabled}
   />
@@ -981,5 +1028,22 @@
   :global(.ag-row.offer-row-yellow.ag-row-hover),
   :global(.ag-row.offer-row-yellow.ag-row-hover .ag-cell) {
     background-color: #fef08a !important;
+  }
+
+  /* Disabled (archived) offers: washed-out + muted text. The buttons in the row
+     stay clickable so the user can re-enable or delete them. */
+  :global(.ag-row.offer-row-disabled),
+  :global(.ag-row.offer-row-disabled .ag-cell) {
+    background-color: #f3f4f6 !important;
+    color: #9ca3af !important;
+    opacity: 0.85;
+  }
+  :global(.ag-row.offer-row-disabled .ag-cell a),
+  :global(.ag-row.offer-row-disabled .ag-cell span) {
+    color: #9ca3af !important;
+  }
+  :global(.ag-row.offer-row-disabled.ag-row-hover),
+  :global(.ag-row.offer-row-disabled.ag-row-hover .ag-cell) {
+    background-color: #e5e7eb !important;
   }
 </style>

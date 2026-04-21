@@ -99,6 +99,11 @@ export const prospectOffer = pgTable("prospect_offer", {
   offerUrl: text("offer_url"),
   offerLocation: text("offer_location"),
   offerContent: text("offer_content"),
+  /**
+   * When set, the offer is considered "archived": it stays visible for history
+   * but its contacts stop showing up in the CRM and outreach is blocked.
+   */
+  disabledAt: timestamp("disabled_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   listIdIdx: index("prospect_offer_list_id_idx").on(table.listId),

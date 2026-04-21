@@ -53,6 +53,7 @@ export const GET: RequestHandler = async ({ locals }) => {
       offerTitle: prospectOffer.offerTitle,
       offerUrl: prospectOffer.offerUrl,
       companyName: prospectOffer.companyName,
+      offerDisabledAt: prospectOffer.disabledAt,
       listId: prospectList.id,
       listName: prospectList.name,
       emailSentAt: prospectContact.emailSentAt,
@@ -71,6 +72,9 @@ export const GET: RequestHandler = async ({ locals }) => {
     .where(
       and(
         eq(prospectList.userId, locals.user.id),
+        // Contacts attached to disabled (archived) offers still show up in the
+        // CRM for history / follow-ups, but the UI renders them greyed out and
+        // any outreach attempt is blocked server-side.
         or(
           isNotNull(prospectContact.emailSentAt),
           isNotNull(prospectContact.linkedinSentAt),

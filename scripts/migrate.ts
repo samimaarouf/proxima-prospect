@@ -12,6 +12,7 @@ const pool = new Pool({ connectionString: DATABASE_URL });
 
 const migrations = [
   "0006_backfill_send_dates.sql",
+  "0007_offer_disabled.sql",
 ];
 
 for (const file of migrations) {
