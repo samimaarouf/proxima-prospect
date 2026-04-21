@@ -3,6 +3,8 @@ import { db } from "$lib/server/db";
 import { prospectList, prospectOffer, prospectContact } from "$lib/server/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
+import { normalizeLinkedInUrl } from "$lib/linkedinUrl";
+import { backfillSentDatesForList } from "$lib/server/backfillSentDates";
 
 function parseCsv(text: string): Record<string, string>[] {
   const normalized = text.replace(/\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -103,12 +105,24 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     .from(prospectContact)
     .where(inArray(prospectContact.offerId, offerIds));
 
-  // Index by linkedin URL and by fullName (lowercased) for fast lookup
-  const byLinkedin = new Map<string, typeof allContacts[0]>();
-  const byFullName = new Map<string, typeof allContacts[0]>();
+  // Index by normalised LinkedIn URL + fullName.  Each key can point to
+  // MULTIPLE contacts (e.g. same CEO shared across offers pre-dedupe) so we
+  // update every match instead of silently dropping all but one.
+  const byLinkedin = new Map<string, typeof allContacts>();
+  const byFullName = new Map<string, typeof allContacts>();
   for (const c of allContacts) {
-    if (c.linkedinUrl) byLinkedin.set(c.linkedinUrl.toLowerCase().trim(), c);
-    if (c.fullName) byFullName.set(c.fullName.toLowerCase().trim(), c);
+    const li = normalizeLinkedInUrl(c.linkedinUrl);
+    if (li) {
+      const bucket = byLinkedin.get(li) ?? [];
+      bucket.push(c);
+      byLinkedin.set(li, bucket);
+    }
+    if (c.fullName) {
+      const key = c.fullName.toLowerCase().trim();
+      const bucket = byFullName.get(key) ?? [];
+      bucket.push(c);
+      byFullName.set(key, bucket);
+    }
   }
 
   let updated = 0;
@@ -150,27 +164,41 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       fullName = [prenom, nom].filter(Boolean).join(" ") || null;
     }
 
-    // Match contact
-    let matched: typeof allContacts[0] | undefined;
-    if (linkedin) matched = byLinkedin.get(linkedin.toLowerCase());
-    if (!matched && fullName) matched = byFullName.get(fullName.toLowerCase());
+    // Match contact — LinkedIn wins over name.  Multiple rows in the DB can
+    // share the same LinkedIn (legacy data) → update every one of them so
+    // the enrichment doesn't get lost.
+    let matches: typeof allContacts = [];
+    const normalizedLinkedIn = normalizeLinkedInUrl(linkedin);
+    if (normalizedLinkedIn) matches = byLinkedin.get(normalizedLinkedIn) ?? [];
+    if (matches.length === 0 && fullName) {
+      matches = byFullName.get(fullName.toLowerCase()) ?? [];
+    }
 
-    if (!matched) { notFound++; continue; }
+    if (matches.length === 0) { notFound++; continue; }
 
-    // Only overwrite non-empty values
+    const patch = {
+      ...(email1 ? { email: email1 } : {}),
+      ...(email2 ? { email2 } : {}),
+      ...(tel1 ? { phone1: tel1 } : {}),
+      ...(tel2 ? { phone2: tel2 } : {}),
+      ...(fullName ? { fullName } : {}),
+      // Persist the canonical URL so future imports keep matching cleanly.
+      ...(normalizedLinkedIn ? { linkedinUrl: normalizedLinkedIn } : {}),
+      updatedAt: new Date(),
+    };
     await db
       .update(prospectContact)
-      .set({
-        ...(email1 ? { email: email1 } : {}),
-        ...(email2 ? { email2 } : {}),
-        ...(tel1 ? { phone1: tel1 } : {}),
-        ...(tel2 ? { phone2: tel2 } : {}),
-        ...(fullName ? { fullName } : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(prospectContact.id, matched.id));
+      .set(patch)
+      .where(inArray(prospectContact.id, matches.map((m) => m.id)));
 
-    updated++;
+    updated += matches.length;
+  }
+
+  // Enrichment often adds an email that finally matches a past
+  // message_history row — backfill so the contact shows up as contacted.
+  if (updated > 0) {
+    try { await backfillSentDatesForList(locals.user.id, params.id); }
+    catch (e) { console.warn("[import-contacts] backfill failed:", e); }
   }
 
   return json({ updated, notFound, total: rows.length });

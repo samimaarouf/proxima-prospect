@@ -3,6 +3,7 @@ import { db } from "$lib/server/db";
 import { prospectOffer, prospectContact, prospectList } from "$lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
+import { normalizeLinkedInUrl } from "$lib/linkedinUrl";
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return json({ error: "Non authentifié" }, { status: 401 });
@@ -36,7 +37,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     .insert(prospectContact)
     .values({
       offerId: params.id,
-      linkedinUrl: linkedinUrl || null,
+      linkedinUrl: normalizeLinkedInUrl(linkedinUrl ?? null),
       fullName: fullName || null,
       jobTitle: jobTitle || null,
       email: email || null,

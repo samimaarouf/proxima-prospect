@@ -324,15 +324,51 @@
           <h3 class="text-sm font-semibold">Contacts ({data.contacts.length})</h3>
           <div class="space-y-1.5">
             {#each data.contacts as c (c.id)}
+              {@const contacted = !!(c.emailSentAt || c.linkedinSentAt || c.whatsappSentAt)}
               <div class="flex items-center gap-3 py-1.5 border-b border-border/60 last:border-0">
-                <div class="w-8 h-8 rounded-full bg-linear-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white text-xs font-semibold shrink-0">
+                <div class="w-8 h-8 rounded-full bg-linear-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white text-xs font-semibold shrink-0 relative">
                   {initial(c.fullName || c.email || "?")}
+                  {#if contacted}
+                    <span
+                      class="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-background flex items-center justify-center"
+                      title="Déjà contacté"
+                    >
+                      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                  {/if}
                 </div>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm font-medium truncate">{c.fullName || c.email || c.linkedinUrl || "Contact"}</span>
                     {#if c.offerDisabled}
                       <span class="text-[10px] uppercase tracking-wide px-1 py-0.5 rounded bg-gray-200 text-gray-600">off</span>
+                    {/if}
+                    {#if c.emailSentAt}
+                      <span
+                        class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        title="Email envoyé le {formatDate(c.emailSentAt)}"
+                      >
+                        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                        {formatDate(c.emailSentAt)}
+                      </span>
+                    {/if}
+                    {#if c.linkedinSentAt}
+                      <span
+                        class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200"
+                        title="LinkedIn envoyé le {formatDate(c.linkedinSentAt)}"
+                      >
+                        <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452z"/></svg>
+                        {formatDate(c.linkedinSentAt)}
+                      </span>
+                    {/if}
+                    {#if c.whatsappSentAt}
+                      <span
+                        class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200"
+                        title="WhatsApp envoyé le {formatDate(c.whatsappSentAt)}"
+                      >
+                        <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M20.52 3.449C18.24 1.245 15.24 0 12.045 0 5.463 0 .104 5.334.101 11.893c0 2.096.549 4.14 1.595 5.945L0 24l6.335-1.652a12.062 12.062 0 005.71 1.447h.006c6.585 0 11.946-5.336 11.949-11.896 0-3.176-1.24-6.165-3.495-8.411"/></svg>
+                        {formatDate(c.whatsappSentAt)}
+                      </span>
                     {/if}
                   </div>
                   <div class="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">

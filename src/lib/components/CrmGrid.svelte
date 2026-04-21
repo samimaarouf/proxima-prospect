@@ -887,13 +887,9 @@
     rowHeight: 52,
     getRowId: (params) => params.data.id,
     rowClassRules: {
-      "crm-row-disabled": (params) => !!params.data?.offerDisabledAt,
-      "crm-row-green": (params) =>
-        !params.data?.offerDisabledAt && isRdvScheduled(params.data),
+      "crm-row-green": (params) => isRdvScheduled(params.data),
       "crm-row-red": (params) =>
-        !params.data?.offerDisabledAt &&
-        !isRdvScheduled(params.data) &&
-        needsAction(params.data),
+        !isRdvScheduled(params.data) && needsAction(params.data),
     },
     onCellClicked: (event: CellClickedEvent<CrmRow>) => {
       const colId = event.colDef.colId || event.colDef.field;
@@ -1644,23 +1640,6 @@
   :global(.ag-row.crm-row-green.ag-row-hover),
   :global(.ag-row.crm-row-green.ag-row-hover .ag-cell) {
     background-color: #bbf7d0 !important;
-  }
-
-  /* Disabled / archived offers: contact stays visible for history but is
-     washed out to make it clear nothing more should be sent. */
-  :global(.ag-row.crm-row-disabled),
-  :global(.ag-row.crm-row-disabled .ag-cell) {
-    background-color: #f3f4f6 !important;
-    color: #9ca3af !important;
-    opacity: 0.85;
-  }
-  :global(.ag-row.crm-row-disabled .ag-cell a),
-  :global(.ag-row.crm-row-disabled .ag-cell span) {
-    color: #9ca3af !important;
-  }
-  :global(.ag-row.crm-row-disabled.ag-row-hover),
-  :global(.ag-row.crm-row-disabled.ag-row-hover .ag-cell) {
-    background-color: #e5e7eb !important;
   }
 
   .next-step-tags {

@@ -1,9 +1,11 @@
 import { json } from "@sveltejs/kit";
 import { db } from "$lib/server/db";
 import { prospectList, prospectOffer, prospectContact } from "$lib/server/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
 import { buildOfferIndex, loadUserOffers } from "$lib/server/offerMatch";
+import { normalizeLinkedInUrl } from "$lib/linkedinUrl";
+import { backfillSentDatesForList } from "$lib/server/backfillSentDates";
 
 // Parse CSV properly handling multi-line quoted fields and auto-detecting separator
 function parseCsv(text: string): Record<string, string>[] {
@@ -75,11 +77,30 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
   if (!rows.length) return json({ error: "CSV vide ou invalide" }, { status: 400 });
 
-  // Pre-load every offer the user already has (across every list) so we can
-  // skip rows whose offer already exists somewhere. Matching is done on the
-  // normalized offerUrl when present, otherwise on (companyName + offerTitle).
+  // Only skip rows whose offer already exists in THIS list — same offer in
+  // another list is fine (cross-list duplicates are surfaced via the yellow
+  // highlight and the company sheet).  This avoids silent drops when
+  // re-importing a sheet into a fresh list.
   const existingOffers = await loadUserOffers(locals.user.id);
-  const offerIndex = buildOfferIndex(existingOffers);
+  const sameListOffers = existingOffers.filter((o) => o.listId === params.id);
+  const offerIndex = buildOfferIndex(sameListOffers);
+
+  // Also pre-load existing contacts for this list so we can avoid creating
+  // duplicate CEO/Fondateur contacts when multiple offers share the same
+  // LinkedIn profile (frequent with Welcome-to-the-Jungle exports: 2 jobs,
+  // 1 CEO → 2 rows but the person should only appear once).
+  const sameListOfferIds = sameListOffers.map((o) => o.id);
+  const existingContacts = sameListOfferIds.length
+    ? await db
+        .select({ id: prospectContact.id, linkedinUrl: prospectContact.linkedinUrl })
+        .from(prospectContact)
+        .where(inArray(prospectContact.offerId, sameListOfferIds))
+    : [];
+  const contactByLinkedIn = new Map<string, string>();
+  for (const c of existingContacts) {
+    const key = normalizeLinkedInUrl(c.linkedinUrl);
+    if (key) contactByLinkedIn.set(key, c.id);
+  }
 
   let imported = 0;
   let skipped = 0;
@@ -137,21 +158,31 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       .returning();
 
     // Create the CEO/Fondateur contact only if a valid LinkedIn URL is present
-    const linkedinUrl =
-      linkedinCeo && linkedinCeo !== "Not Found" && linkedinCeo.startsWith("http")
-        ? linkedinCeo
-        : null;
-
-    if (linkedinUrl) {
-      await db.insert(prospectContact).values({
-        offerId: offer.id,
-        linkedinUrl,
-        contactStatus: "undefined",
-      });
+    // AND that profile isn't already linked to another offer in this list
+    // (same CEO shared by two offers → keep a single contact).
+    const linkedinUrl = normalizeLinkedInUrl(linkedinCeo);
+    if (linkedinUrl && !contactByLinkedIn.has(linkedinUrl)) {
+      const [inserted] = await db
+        .insert(prospectContact)
+        .values({
+          offerId: offer.id,
+          linkedinUrl,
+          contactStatus: "undefined",
+        })
+        .returning({ id: prospectContact.id });
+      contactByLinkedIn.set(linkedinUrl, inserted.id);
     }
 
     offerIndex.add(candidate);
     imported++;
+  }
+
+  // Backfill "already contacted" dates from message_history so a freshly
+  // imported contact whose LinkedIn/email was previously messaged shows up
+  // as already-touched in the CRM.
+  if (imported > 0) {
+    try { await backfillSentDatesForList(locals.user.id, params.id); }
+    catch (e) { console.warn("[import-csv] backfill failed:", e); }
   }
 
   return json({ imported, skipped, duplicates });

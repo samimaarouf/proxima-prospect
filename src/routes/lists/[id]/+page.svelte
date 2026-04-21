@@ -366,10 +366,20 @@
         suppressMovable: true,
         cellRenderer: (params: ICellRendererParams) => {
           const isGroup = !!params.data?.isGroup;
-          if (isGroup) return "";
+          const offerIds = (params.data?.offerIds as string[] | undefined) ?? [
+            params.data?.id,
+          ];
+          // Group is "disabled" only when every offer is disabled.  Clicking
+          // toggles them all in one shot.
           const disabled = !!params.data?.disabledAt;
           const btn = document.createElement("button");
-          btn.title = disabled ? "Réactiver l'offre" : "Désactiver l'offre";
+          btn.title = isGroup
+            ? disabled
+              ? `Réactiver les ${offerIds.length} offres`
+              : `Désactiver les ${offerIds.length} offres`
+            : disabled
+            ? "Réactiver l'offre"
+            : "Désactiver l'offre";
           btn.style.cssText = "display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid #e5e7eb;background:transparent;cursor:pointer;transition:background 0.15s;";
           btn.innerHTML = disabled
             ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>`
@@ -378,7 +388,11 @@
           btn.addEventListener("mouseleave", () => { btn.style.background = "transparent"; });
           btn.addEventListener("click", (e) => {
             e.stopPropagation();
-            handleToggleOfferDisabled(params.data?.id);
+            if (isGroup) {
+              handleToggleGroupDisabled(offerIds, !disabled);
+            } else {
+              handleToggleOfferDisabled(params.data?.id);
+            }
           });
           return btn;
         },
@@ -427,6 +441,39 @@
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
     }
+  }
+
+  /**
+   * Toggle every offer of a grouped row at once.  Runs the PATCHes in
+   * parallel, updates the local offers list as each one succeeds, and shows
+   * a single summary toast.
+   */
+  async function handleToggleGroupDisabled(offerIds: string[], willDisable: boolean) {
+    if (!offerIds?.length) return;
+    const results = await Promise.allSettled(
+      offerIds.map((id) =>
+        fetch(`/api/offers/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ disabled: willDisable }),
+        }).then(async (res) => {
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Erreur");
+          updateOffer(data);
+          return data;
+        }),
+      ),
+    );
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const ko = results.length - ok;
+    if (ok > 0) {
+      toast.success(
+        willDisable
+          ? `${ok} offre${ok > 1 ? "s" : ""} désactivée${ok > 1 ? "s" : ""}`
+          : `${ok} offre${ok > 1 ? "s" : ""} réactivée${ok > 1 ? "s" : ""}`,
+      );
+    }
+    if (ko > 0) toast.error(`${ko} échec(s)`);
   }
 
   let scrapingOfferId = $state<string | null>(null);
@@ -1088,8 +1135,7 @@
   .main-layout {
     display: flex;
     flex-direction: column;
-    height: 100vh;
-    overflow: hidden;
+    min-height: 100vh;
     background: white;
   }
 

@@ -1,9 +1,11 @@
 import { json } from "@sveltejs/kit";
 import { db } from "$lib/server/db";
 import { prospectList, prospectOffer, prospectContact } from "$lib/server/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
 import { buildOfferIndex, loadUserOffers } from "$lib/server/offerMatch";
+import { normalizeLinkedInUrl } from "$lib/linkedinUrl";
+import { backfillSentDatesForList } from "$lib/server/backfillSentDates";
 
 // New Excel column format (0-indexed):
 // Entreprise | Intitulé du poste | URL Offre | Localisation | LinkedIn | Tél. 1 | Tél. 2 | Email | Date | Touches | Action | Étape | Notes
@@ -218,11 +220,27 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       return json({ error: "Aucun contact valide trouvé dans le fichier" }, { status: 400 });
     }
 
-    // Pre-load every offer the user already has (across every list) so we can
-    // skip rows whose offer already exists somewhere. Matching is done on the
-    // normalized offerUrl when present, otherwise on (companyName + offerTitle).
+    // Only skip rows whose offer already exists in THIS list.  Offers living
+    // in other lists are allowed through — cross-list duplicates are handled
+    // visually (yellow highlight + company sheet) rather than dropped.
     const existingOffers = await loadUserOffers(locals.user.id);
-    const existingIndex = buildOfferIndex(existingOffers);
+    const sameListOffers = existingOffers.filter((o) => o.listId === params.id);
+    const existingIndex = buildOfferIndex(sameListOffers);
+
+    // Pre-index existing contacts of this list by normalised LinkedIn so we
+    // don't recreate the same person when several offers share a CEO.
+    const sameListOfferIds = sameListOffers.map((o) => o.id);
+    const existingContactRows = sameListOfferIds.length
+      ? await db
+          .select({ id: prospectContact.id, linkedinUrl: prospectContact.linkedinUrl })
+          .from(prospectContact)
+          .where(inArray(prospectContact.offerId, sameListOfferIds))
+      : [];
+    const listContactByLinkedIn = new Map<string, string>();
+    for (const c of existingContactRows) {
+      const key = normalizeLinkedInUrl(c.linkedinUrl);
+      if (key) listContactByLinkedIn.set(key, c.id);
+    }
 
     // Group contacts by company+offer to create offers first
     const offerMap = new Map<string, string>(); // key: "companyName||offerTitle||offerUrl" => offerId
@@ -261,28 +279,31 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
       const offerId = offerMap.get(offerKey)!;
 
-      // Upsert contact (by offerId + linkedinUrl if available)
-      if (contact.linkedinUrl) {
-        // Check if exists
-        const existing = await db
-          .select({ id: prospectContact.id })
-          .from(prospectContact)
-          .where(and(eq(prospectContact.offerId, offerId), eq(prospectContact.linkedinUrl, contact.linkedinUrl)))
-          .limit(1);
+      // Upsert contact — deduped across the entire list by normalised
+      // LinkedIn URL (not just the current offer).  Same CEO linked to two
+      // offers should stay one contact, attached to the first offer seen.
+      const normalizedLinkedIn = contact.linkedinUrl
+        ? normalizeLinkedInUrl(contact.linkedinUrl)
+        : null;
 
-        if (existing.length === 0) {
-          await db.insert(prospectContact).values({
-            offerId,
-            linkedinUrl: contact.linkedinUrl,
-            phone1: contact.phone1,
-            phone2: contact.phone2,
-            email: contact.email,
-            lastContactDate: contact.lastContactDate,
-            touchCount: contact.touchCount,
-            lastAction: contact.lastAction,
-            nextStep: contact.nextStep,
-            notes: contact.notes,
-          });
+      if (normalizedLinkedIn) {
+        if (!listContactByLinkedIn.has(normalizedLinkedIn)) {
+          const [inserted] = await db
+            .insert(prospectContact)
+            .values({
+              offerId,
+              linkedinUrl: normalizedLinkedIn,
+              phone1: contact.phone1,
+              phone2: contact.phone2,
+              email: contact.email,
+              lastContactDate: contact.lastContactDate,
+              touchCount: contact.touchCount,
+              lastAction: contact.lastAction,
+              nextStep: contact.nextStep,
+              notes: contact.notes,
+            })
+            .returning({ id: prospectContact.id });
+          listContactByLinkedIn.set(normalizedLinkedIn, inserted.id);
           contactsCreated++;
         }
       } else {
@@ -303,6 +324,11 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       }
     }
 
+    if (contactsCreated > 0 || offersCreated > 0) {
+      try { await backfillSentDatesForList(locals.user.id, params.id); }
+      catch (e) { console.warn("[import-xlsx] backfill failed:", e); }
+    }
+
     return json({ success: true, contactsCreated, offersCreated, offersSkipped });
   } catch (err) {
     console.error("Import error:", err);
@@ -313,11 +339,3 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   }
 };
 
-function normalizeLinkedInUrl(url: string): string {
-  if (!url) return url;
-  // Normalize various LinkedIn URL formats
-  if (url.startsWith("http")) return url;
-  if (url.startsWith("linkedin.com")) return `https://${url}`;
-  if (url.startsWith("www.linkedin.com")) return `https://${url}`;
-  return url;
-}

@@ -1,6 +1,6 @@
 import { db } from "$lib/server/db";
 import { prospectList, prospectOffer, prospectContact } from "$lib/server/db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, isNull } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
 
 function escapeCsv(value: string | null | undefined): string {
@@ -30,11 +30,17 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 
   const listName = lists[0].name;
 
-  // Fetch offers with their contacts
+  // Fetch offers with their contacts. Disabled (archived) offers are excluded
+  // — they stay in the UI for history but shouldn't bloat exports.
   const offers = await db
     .select()
     .from(prospectOffer)
-    .where(eq(prospectOffer.listId, params.id));
+    .where(
+      and(
+        eq(prospectOffer.listId, params.id),
+        isNull(prospectOffer.disabledAt),
+      ),
+    );
 
   const offerIds = offers.map((o) => o.id);
 
