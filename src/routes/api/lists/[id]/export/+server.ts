@@ -2,6 +2,7 @@ import { db } from "$lib/server/db";
 import { prospectList, prospectOffer, prospectContact } from "$lib/server/db/schema";
 import { eq, and, inArray, isNull } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
+import { normalizeCompany } from "$lib/offerMatch";
 
 function escapeCsv(value: string | null | undefined): string {
   if (value == null) return "";
@@ -59,11 +60,34 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     contactsByOffer.get(c.offerId)!.push(c);
   }
 
+  // Fallback lookup: contacts grouped by normalized company name. Used when
+  // an individual offer has no direct contact (e.g. two offers for the same
+  // company where only one was enriched) so the export still surfaces who
+  // owns the account for the company.
+  const contactsByCompany = new Map<string, typeof contacts>();
+  for (const offer of offers) {
+    const key = normalizeCompany(offer.companyName);
+    if (!key) continue;
+    const cs = contactsByOffer.get(offer.id);
+    if (!cs || cs.length === 0) continue;
+    const bucket = contactsByCompany.get(key) ?? [];
+    for (const c of cs) {
+      if (!bucket.some((x) => x.id === c.id)) bucket.push(c);
+    }
+    contactsByCompany.set(key, bucket);
+  }
+
   const headers = ["Entreprise", "Offre", "Localisation", "Nom du décisionnaire", "Titre", "LinkedIn", "Email 1", "Email 2", "Téléphone 1", "Téléphone 2"];
   const rows: string[][] = [headers];
 
   for (const offer of offers) {
-    const offerContacts = contactsByOffer.get(offer.id) ?? [];
+    let offerContacts = contactsByOffer.get(offer.id) ?? [];
+    if (offerContacts.length === 0) {
+      const companyKey = normalizeCompany(offer.companyName);
+      if (companyKey) {
+        offerContacts = contactsByCompany.get(companyKey) ?? [];
+      }
+    }
 
     if (offerContacts.length === 0) {
       rows.push([offer.companyName, offer.offerTitle ?? "", offer.offerLocation ?? "", "", "", "", "", "", "", ""]);

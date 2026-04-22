@@ -28,6 +28,7 @@
     phone1: string | null;
     phone2: string | null;
     email: string | null;
+    email2: string | null;
     fullName: string | null;
     jobTitle: string | null;
     linkedinData: unknown;
@@ -366,7 +367,11 @@
       return [contact.phone1, contact.phone2].filter((v): v is string => !!v);
     }
     if (deliveryChannel === "email") {
-      return [contact.email].filter((v): v is string => !!v);
+      const out: string[] = [];
+      for (const v of [contact.email, contact.email2]) {
+        if (v && !out.includes(v)) out.push(v);
+      }
+      return out;
     }
     return [];
   }

@@ -101,6 +101,31 @@
 
   $effect(() => { loadCoresignalKeys(); });
 
+  // Prénom d'expéditeur utilisé dans les messages générés (emails / LinkedIn / WhatsApp)
+  let senderFirstName = $state(data.senderFirstName ?? "");
+  let savingSenderFirstName = $state(false);
+
+  function firstNameFromFullName(fullName: string | null): string {
+    if (!fullName) return "";
+    return fullName.trim().split(/\s+/).filter(Boolean)[0] ?? "";
+  }
+  const defaultFirstName = $derived(firstNameFromFullName(data.userName));
+
+  async function saveSenderFirstName() {
+    savingSenderFirstName = true;
+    try {
+      const fd = new FormData();
+      fd.append("senderFirstName", senderFirstName);
+      const res = await fetch("?/saveSenderFirstName", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("Erreur");
+      toast.success("Prénom d'expéditeur mis à jour !");
+    } catch {
+      toast.error("Impossible de sauvegarder le prénom.");
+    } finally {
+      savingSenderFirstName = false;
+    }
+  }
+
   // Fullenrich API key
   let fullenrichKey = $state(data.fullenrichApiKey ?? "");
   let savingFullenrichKey = $state(false);
@@ -183,6 +208,47 @@
   </header>
 
   <main class="max-w-2xl mx-auto px-6 py-10 space-y-8">
+    <!-- Identité expéditeur -->
+    <div>
+      <h2 class="text-2xl font-bold">Identité expéditeur</h2>
+      <p class="text-sm text-muted-foreground mt-1">
+        Prénom utilisé dans la signature des emails, messages LinkedIn et WhatsApp générés par l'IA.
+      </p>
+    </div>
+
+    <div class="border border-border rounded-xl bg-card p-5 space-y-4">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="font-semibold text-sm">Prénom affiché</p>
+          <p class="text-xs text-muted-foreground">
+            Laissez vide pour utiliser le prénom de votre compte{defaultFirstName ? ` (${defaultFirstName})` : ""}.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex gap-2">
+        <input
+          type="text"
+          bind:value={senderFirstName}
+          placeholder={defaultFirstName || "Votre prénom"}
+          maxlength="60"
+          class="flex-1 px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+          autocomplete="given-name"
+          onkeydown={(e) => e.key === "Enter" && saveSenderFirstName()}
+        />
+        <button
+          onclick={saveSenderFirstName}
+          disabled={savingSenderFirstName}
+          class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 shrink-0"
+        >
+          {savingSenderFirstName ? "Sauvegarde…" : "Sauvegarder"}
+        </button>
+      </div>
+    </div>
+
     <div>
       <h2 class="text-2xl font-bold">Connexions Unipile</h2>
       <p class="text-sm text-muted-foreground mt-1">

@@ -52,17 +52,29 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const pitch = listResult[0]?.pitch || "";
 
   const userProfile = await db
-    .select({ name: user.name, company: user.company })
+    .select({ name: user.name, company: user.company, senderFirstName: user.senderFirstName })
     .from(user)
     .where(eq(user.id, locals.user.id))
     .limit(1);
 
-  const recruiterName = userProfile[0]?.name || "Le recruteur";
+  const rawRecruiterName = userProfile[0]?.name || "Le recruteur";
   const recruiterCompany = userProfile[0]?.company || "notre entreprise";
+  const customSenderFirstName = userProfile[0]?.senderFirstName?.trim() || "";
 
   const contactName = contact.fullName || "le/la décideur(se)";
   const contactFirstName = firstNameFromFullName(contact.fullName || "") || "Madame/Monsieur";
-  const recruiterFirstName = firstNameFromFullName(recruiterName) || recruiterName;
+  const recruiterFirstName =
+    customSenderFirstName || firstNameFromFullName(rawRecruiterName) || rawRecruiterName;
+
+  // Si l'utilisateur a défini un prénom d'expéditeur personnalisé, on remplace
+  // la première partie du nom complet pour éviter que l'IA ne mélange les prénoms
+  // (ex : "Sami Maarouf" + override "Alex" → "Alex Maarouf").
+  const recruiterName = (() => {
+    if (!customSenderFirstName) return rawRecruiterName;
+    const parts = rawRecruiterName.trim().split(/\s+/).filter(Boolean);
+    if (parts.length <= 1) return customSenderFirstName;
+    return [customSenderFirstName, ...parts.slice(1)].join(" ");
+  })();
   const contactJobTitle = contact.jobTitle || "";
   const linkedinSummary = contact.linkedinSummary || "";
 

@@ -10,6 +10,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 
   const [profile] = await db
     .select({
+      name: user.name,
+      senderFirstName: user.senderFirstName,
       unipileLinkedInAccountId: user.unipileLinkedInAccountId,
       unipileWhatsAppAccountId: user.unipileWhatsAppAccountId,
       unipileAccountId: user.unipileAccountId,
@@ -52,6 +54,8 @@ export const load: PageServerLoad = async ({ locals }) => {
     emailAccount,
     coresignalApiKey: profile?.coresignalApiKey ?? null,
     fullenrichApiKey: profile?.fullenrichApiKey ?? null,
+    userName: profile?.name ?? null,
+    senderFirstName: profile?.senderFirstName ?? null,
   };
 };
 
@@ -69,6 +73,15 @@ export const actions: Actions = {
     const formData = await request.formData();
     const key = (formData.get("key") as string | null)?.trim() || null;
     await db.update(user).set({ fullenrichApiKey: key }).where(eq(user.id, locals.user.id));
+    return { success: true };
+  },
+
+  saveSenderFirstName: async ({ locals, request }) => {
+    if (!locals.user) throw redirect(302, "/login");
+    const formData = await request.formData();
+    const raw = (formData.get("senderFirstName") as string | null)?.trim();
+    const senderFirstName = raw ? raw.slice(0, 60) : null;
+    await db.update(user).set({ senderFirstName }).where(eq(user.id, locals.user.id));
     return { success: true };
   },
 
