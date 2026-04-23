@@ -40,6 +40,7 @@
 		"vite": "^7.0.4"
 	},
 	"dependencies": {
+		"@anthropic-ai/sdk": "^0.90.0",
 		"ag-grid-enterprise": "32.3.5",
 		"ag-grid-svelte5-extended": "^0.0.13",
 		"better-auth": "1.4.0-beta.20",

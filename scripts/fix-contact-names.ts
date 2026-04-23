@@ -70,13 +70,13 @@ Si tu n'es pas sûr à >= 70 %, renvoie {"firstName": null, "lastName": null, "c
         create: (a: {
           model: string;
           tools: { type: string }[];
-          messages: { role: string; content: string }[];
+          input: string;
         }) => Promise<{ output_text?: string }>;
       };
     }).responses.create({
-      model: "gpt-4o-mini-search-preview",
+      model: "gpt-4o-mini",
       tools: [{ type: "web_search_preview" }],
-      messages: [{ role: "user", content: prompt }],
+      input: prompt,
     });
     const raw = (res.output_text ?? "").trim()
       .replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();

@@ -4,6 +4,7 @@ import { prospectContact, prospectOffer, prospectList, user } from "$lib/server/
 import { eq } from "drizzle-orm";
 import OpenAI from "openai";
 import { env } from "$env/dynamic/private";
+import { chatComplete } from "$lib/server/aiChat";
 import type { RequestHandler } from "./$types";
 
 function firstNameFromFullName(fullName: string): string {
@@ -78,6 +79,9 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const contactJobTitle = contact.jobTitle || "";
   const linkedinSummary = contact.linkedinSummary || "";
 
+  // OpenAI client is kept only for the web-search hook (cheap + reliable).
+  // Message generation itself now goes through `chatComplete` which prefers
+  // Claude Sonnet 4.5 when `ANTHROPIC_API_KEY` is set.
   const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
   // ── LinkedIn : court, distinct de WhatsApp / email ; stocké dans ai_message_linkedin ──
@@ -110,22 +114,15 @@ ${linkedinSummary ? `- Résumé profil LinkedIn : ${linkedinSummary.slice(0, 400
     try {
       let aiLinkedin = "";
       for (let attempt = 0; attempt < 2; attempt++) {
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4o",
-          messages: [
-            { role: "system", content: linkedinSystemPrompt },
-            {
-              role: "user",
-              content:
-                attempt === 0
-                  ? linkedinUserPayload
-                  : `Le message précédent était trop long. Raccourcis-le pour qu'il fasse strictement moins de 300 caractères. Message actuel : "${aiLinkedin}"`,
-            },
-          ],
-          max_tokens: 120,
+        aiLinkedin = await chatComplete({
+          systemPrompt: linkedinSystemPrompt,
+          userPrompt:
+            attempt === 0
+              ? linkedinUserPayload
+              : `Le message précédent était trop long. Raccourcis-le pour qu'il fasse strictement moins de 300 caractères. Message actuel : "${aiLinkedin}"`,
+          maxTokens: 200,
           temperature: 0.5,
         });
-        aiLinkedin = completion.choices[0]?.message?.content?.trim() || "";
         if (aiLinkedin.length <= 300) break;
       }
       if (aiLinkedin.length > 300) aiLinkedin = aiLinkedin.substring(0, 297) + "…";
@@ -150,20 +147,15 @@ ${linkedinSummary ? `- Résumé profil LinkedIn : ${linkedinSummary.slice(0, 400
   let companyHook = "";
   try {
     const searchResponse = await (openai as any).responses.create({
-      model: "gpt-4o-mini-search-preview",
+      model: "gpt-4o-mini",
       tools: [{ type: "web_search_preview" }],
-      messages: [
-        {
-          role: "user",
-          content: `Fais une recherche rapide sur l'entreprise "${offer.companyName}" et son offre de recrutement pour un "${offer.offerTitle || "poste Sales"}".
+      input: `Fais une recherche rapide sur l'entreprise "${offer.companyName}" et son offre de recrutement pour un "${offer.offerTitle || "poste Sales"}".
 Trouve un élément concret et récent qui expliquerait POURQUOI ils recrutent maintenant :
 - Levée de fonds récente ?
 - Départ d'un collaborateur Sales notable ?
 - Croissance annoncée / expansion géographique ?
 - Contrat signé / nouveau marché ?
 Réponds en 1-2 phrases FACTUELLES et PRÉCISES que je pourrai glisser dans un email de prospection. Si tu ne trouves rien de concret, réponds juste "rien de trouvé".`,
-        },
-      ],
     });
     const hookText: string = searchResponse.output_text?.trim() || "";
     if (hookText && hookText.toLowerCase() !== "rien de trouvé") {
@@ -219,17 +211,12 @@ RÈGLES STRICTES :
 Objectif : que le prospect se dise "Ce recruteur sait exactement qui je cherche et ça ne me coûte rien d'essayer."${extraInstructions ? `\n\nInstructions supplémentaires (prioritaires) :\n${extraInstructions}` : ""}`;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: "Génère le message de prospection." },
-      ],
-      max_tokens: 450,
+    const aiMessage = await chatComplete({
+      systemPrompt,
+      userPrompt: "Génère le message de prospection.",
+      maxTokens: 700,
       temperature: 0.75,
     });
-
-    const aiMessage = completion.choices[0]?.message?.content?.trim() || "";
 
     const [updated] = await db
       .update(prospectContact)
