@@ -1602,9 +1602,9 @@
               >
                 <div class="flex items-center gap-2">
                   <div class="w-2 h-2 rounded-full {dmSource === 'web' ? 'bg-indigo-500' : 'bg-muted-foreground/30'}"></div>
-                  <span class="text-sm font-medium">Recherche web</span>
+                  <span class="text-sm font-medium">LinkedIn</span>
                 </div>
-                <p class="text-xs text-muted-foreground mt-1">Google + LinkedIn via IA. Utile quand Coresignal ne couvre pas.</p>
+                <p class="text-xs text-muted-foreground mt-1">Recherche directe sur LinkedIn via ton compte connecté.</p>
               </button>
             </div>
           </div>

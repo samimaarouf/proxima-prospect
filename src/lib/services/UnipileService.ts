@@ -746,6 +746,116 @@ export class UnipileService {
       return null;
     }
   }
+
+  // ============================================
+  // LinkedIn Search (Classic API)
+  // ============================================
+
+  /**
+   * Resolve a LinkedIn search parameter to its internal ID (company, location,
+   * industry). Used to convert a free-text string like "Advizeo" into the
+   * structured ID required by `searchLinkedInPeople`.
+   *
+   * Returns the best-ranked match (first result) or null if nothing matches.
+   */
+  async getSearchParameterId(
+    accountId: string,
+    type: "COMPANY" | "LOCATION" | "INDUSTRY" | "SCHOOL",
+    keywords: string,
+  ): Promise<string | null> {
+    const params = new URLSearchParams({
+      account_id: accountId,
+      type,
+      keywords,
+      limit: "10",
+    });
+    try {
+      const data = await this.request<{
+        items?: Array<{ id?: string | number; title?: string; name?: string }>;
+      }>(`/linkedin/search/parameters?${params.toString()}`);
+      const first = data.items?.[0];
+      if (!first?.id) return null;
+      return String(first.id);
+    } catch (err) {
+      console.warn(`[unipile] getSearchParameterId(${type}, "${keywords}") failed:`, err);
+      return null;
+    }
+  }
+
+  /**
+   * Perform a LinkedIn Classic "people" search on behalf of the connected
+   * account. Returns the raw list of matching profiles along with basic
+   * pagination metadata.
+   *
+   * Filters map 1:1 to LinkedIn Classic native filters; see Unipile docs:
+   * https://developer.unipile.com/reference/linkedincontroller_search
+   *
+   * Important: `company` / `location` are flat arrays of numeric ID strings
+   * for LinkedIn Classic. The `{ include, exclude }` shape is Sales Navigator
+   * only — sending that to Classic returns errors/invalid_parameters.
+   */
+  async searchLinkedInPeople(
+    accountId: string,
+    params: {
+      keywords?: string;
+      company?: string[];
+      location?: string[];
+      limit?: number;
+    },
+  ): Promise<UnipileLinkedInSearchResponse> {
+    const body: Record<string, unknown> = {
+      api: "classic",
+      category: "people",
+    };
+    if (params.keywords) body.keywords = params.keywords;
+    if (params.company?.length) body.company = params.company;
+    if (params.location?.length) body.location = params.location;
+
+    const query = new URLSearchParams({ account_id: accountId });
+    // LinkedIn Classic caps at 50 per-page according to Unipile docs.
+    if (params.limit) query.set("limit", String(Math.min(params.limit, 50)));
+
+    return this.request<UnipileLinkedInSearchResponse>(
+      `/linkedin/search?${query.toString()}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+  }
+}
+
+export interface UnipileLinkedInPersonCurrentPosition {
+  company?: string | null;
+  company_id?: string | null;
+  role?: string | null;
+  location?: string | null;
+  description?: string | null;
+}
+
+export interface UnipileLinkedInPerson {
+  type: "PEOPLE" | string;
+  id?: string;
+  name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  public_identifier?: string | null;
+  public_profile_url?: string | null;
+  profile_url?: string | null;
+  profile_picture_url?: string | null;
+  headline?: string | null;
+  location?: string | null;
+  industry?: string | null;
+  network_distance?: string | null;
+  current_positions?: UnipileLinkedInPersonCurrentPosition[];
+}
+
+export interface UnipileLinkedInSearchResponse {
+  object?: string;
+  items: UnipileLinkedInPerson[];
+  paging?: { start?: number; page_count?: number; total_count?: number };
+  cursor?: string | null;
 }
 
 // LinkedIn profile type
