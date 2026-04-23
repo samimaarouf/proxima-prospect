@@ -3,7 +3,7 @@ import { db } from "$lib/server/db";
 import { prospectOffer, prospectContact, prospectList } from "$lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { RequestHandler } from "./$types";
-import { normalizeLinkedInUrl } from "$lib/linkedinUrl";
+import { normalizeLinkedInUrl, nameFromLinkedInSlug, looksLikeJobTitleNotName } from "$lib/linkedinUrl";
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return json({ error: "Non authentifié" }, { status: 401 });
@@ -33,12 +33,22 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     email?: string;
   };
 
+  const normalizedUrl = normalizeLinkedInUrl(linkedinUrl ?? null);
+
+  // If the provided fullName looks like a job title (e.g. "Account Executive"
+  // leaked from the offer title), or is missing entirely, fall back to the
+  // name derived from the LinkedIn slug.
+  let finalFullName: string | null = fullName?.trim() || null;
+  if (looksLikeJobTitleNotName(finalFullName, jobTitle ?? null)) {
+    finalFullName = nameFromLinkedInSlug(normalizedUrl) ?? finalFullName;
+  }
+
   const [contact] = await db
     .insert(prospectContact)
     .values({
       offerId: params.id,
-      linkedinUrl: normalizeLinkedInUrl(linkedinUrl ?? null),
-      fullName: fullName || null,
+      linkedinUrl: normalizedUrl,
+      fullName: finalFullName,
       jobTitle: jobTitle || null,
       email: email || null,
       contactStatus: "undefined",

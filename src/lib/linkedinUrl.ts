@@ -78,3 +78,120 @@ export function normalizeLinkedInUrl(input: string | null | undefined): string |
 export function isLinkedInUrl(input: string | null | undefined): boolean {
   return normalizeLinkedInUrl(input) !== null;
 }
+
+/**
+ * Extract a human-readable display name from a LinkedIn profile URL slug.
+ *
+ * Example: "https://www.linkedin.com/in/cyril-sailly-08678b37"
+ *       → "Cyril Sailly"
+ *
+ * Strategy:
+ *   1. Normalise the URL and grab the `/in/<slug>` part.
+ *   2. Split on hyphens.
+ *   3. Drop trailing "hash" segments that LinkedIn appends for uniqueness
+ *      (6+ chars made of digits/lowercase letters, often containing a digit).
+ *   4. Drop anything that looks like a role keyword or generic noise.
+ *   5. Title-case each remaining token.
+ *
+ * Returns `null` if we cannot produce at least one plausible name token.
+ */
+export function nameFromLinkedInSlug(input: string | null | undefined): string | null {
+  const normalized = normalizeLinkedInUrl(input);
+  if (!normalized) return null;
+  const m = normalized.match(/\/in\/([^/]+)$/i);
+  if (!m) return null;
+
+  const slug = decodeURIComponent(m[1]);
+  const parts = slug.split(/[-_]+/).filter(Boolean);
+  if (!parts.length) return null;
+
+  // Drop trailing hash segments (e.g. "08678b37", "ab12cd34", "123456")
+  while (parts.length > 1) {
+    const last = parts[parts.length - 1];
+    const looksLikeHash = /^[0-9a-z]{6,}$/i.test(last) && /\d/.test(last);
+    if (!looksLikeHash) break;
+    parts.pop();
+  }
+
+  // Drop common non-name tokens that sometimes appear in slugs.
+  const NOISE = new Set([
+    "linkedin", "profile", "cv", "official", "pro",
+    "mr", "mrs", "ms", "mme", "mr.", "mrs.", "ms.",
+    "dr", "phd", "md", "esq",
+  ]);
+  const filtered = parts.filter((p) => !NOISE.has(p.toLowerCase()));
+  if (!filtered.length) return null;
+
+  return filtered
+    .map((p) => {
+      if (!p) return p;
+      // Preserve intra-word capitalisation like "McDonald" if the slug was weird,
+      // but default to capitalising the first letter.
+      return p[0].toUpperCase() + p.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+/**
+ * Common job-title / role keywords. When Unipile (or another enrichment source)
+ * returns a "name" that is ONLY composed of words from this list, it's almost
+ * certainly the job title leaking into the name field — not a real person.
+ */
+const ROLE_KEYWORDS = new Set([
+  // English
+  "account", "executive", "manager", "director", "sales", "marketing",
+  "founder", "cofounder", "co", "ceo", "cto", "coo", "cfo", "cmo", "cro",
+  "chief", "officer", "vp", "vice", "president", "head", "lead", "senior",
+  "junior", "associate", "partner", "principal", "consultant", "analyst",
+  "specialist", "engineer", "developer", "designer", "product", "owner",
+  "operations", "operation", "business", "development", "bizdev", "bdr",
+  "sdr", "ae", "csm", "customer", "success", "support", "growth", "people",
+  "talent", "acquisition", "recruiter", "recruitment", "hr", "human",
+  "resources", "finance", "financial", "legal", "revenue", "strategy",
+  "strategic", "solution", "solutions", "enterprise", "corporate",
+  "international", "global", "regional", "country", "emea", "apac", "na",
+  "team", "group", "division", "department", "portfolio", "program",
+  "project", "deputy", "assistant", "intern", "trainee", "freelance",
+  "freelancer", "contractor", "student", "member",
+  // French
+  "directeur", "directrice", "responsable", "chargé", "chargée", "chef",
+  "président", "présidente", "dirigeant", "dirigeante", "gérant", "gérante",
+  "commercial", "commerciale", "développement", "développeur", "ingénieur",
+  "ingénieure", "consultant", "consultante", "analyste", "général",
+  "générale", "adjoint", "adjointe", "stagiaire", "fondateur", "fondatrice",
+]);
+
+/**
+ * Returns `true` when `candidate` looks like it's NOT a real person name but
+ * rather a job title or the literal "LinkedIn Member" fallback that LinkedIn
+ * returns for out-of-network profiles.
+ */
+export function looksLikeJobTitleNotName(
+  candidate: string | null | undefined,
+  headline?: string | null,
+): boolean {
+  if (!candidate) return true;
+  const trimmed = candidate.trim();
+  if (!trimmed) return true;
+
+  // Known LinkedIn placeholders.
+  if (/^linkedin\s*(member|user)$/i.test(trimmed)) return true;
+  if (/^unknown$/i.test(trimmed)) return true;
+
+  // If the "name" equals the headline, it's almost certainly a job title.
+  if (headline && trimmed.toLowerCase() === headline.trim().toLowerCase()) return true;
+
+  const tokens = trimmed
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.replace(/[^a-zà-öø-ÿ']/gi, ""))
+    .filter(Boolean);
+
+  if (!tokens.length) return true;
+
+  // All tokens are role keywords → not a person name.
+  const allRoles = tokens.every((t) => ROLE_KEYWORDS.has(t));
+  if (allRoles) return true;
+
+  return false;
+}

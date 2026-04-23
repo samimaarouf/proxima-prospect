@@ -240,6 +240,7 @@
   let showDmModal = $state(false);
   let dmStep = $state<"select" | "results">("select");
   let dmSelectedRoles = $state<Set<string>>(new Set(["founder_ceo"]));
+  let dmSource = $state<"coresignal" | "web">("coresignal");
   let dmSearching = $state(false);
   let dmCandidates = $state<Candidate[]>([]);
   let dmSelectedCandidates = $state<Set<number>>(new Set());
@@ -251,7 +252,10 @@
     dmError = null;
     dmSearching = true;
     try {
-      const res = await fetch(`/api/offers/${offer.id}/find-decision-makers`, {
+      const endpoint = dmSource === "web"
+        ? `/api/offers/${offer.id}/find-decision-makers-web`
+        : `/api/offers/${offer.id}/find-decision-makers`;
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ roles: Array.from(dmSelectedRoles) }),
@@ -1194,19 +1198,25 @@
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="#0a66c2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
                 </a>
               {/if}
-              {#if needsEnrich && isLinkedInEnabled}
+              {#if contact.linkedinUrl}
                 <button
                   onclick={() => enrichContact(contact)}
-                  disabled={isEnriching || enrichingAll}
+                  disabled={isEnriching || enrichingAll || !isLinkedInEnabled}
                   class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 disabled:opacity-50 transition-colors"
-                  title="Enrichir le profil LinkedIn"
+                  title={!isLinkedInEnabled
+                    ? "Connectez un compte LinkedIn dans les paramètres pour enrichir"
+                    : needsEnrich
+                      ? "Enrichir le profil LinkedIn"
+                      : "Ré-enrichir le profil LinkedIn (écrase les données existantes)"}
                 >
                   {#if isEnriching}
                     <span class="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></span>
-                  {:else}
+                  {:else if needsEnrich}
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                  {:else}
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                   {/if}
-                  Enrichir
+                  {needsEnrich ? "Enrichir" : "Ré-enrichir"}
                 </button>
               {/if}
               {#if fullenrichEnabled && (contact.linkedinUrl || contact.fullName)}
@@ -1567,8 +1577,38 @@
 
         {#if dmStep === "select"}
           <p class="text-sm text-muted-foreground mb-4">
-            Sélectionnez les catégories de décisionnaires à rechercher chez <strong>{offer.companyName}</strong> via Coresignal.
+            Sélectionnez les catégories de décisionnaires à rechercher chez <strong>{offer.companyName}</strong>.
           </p>
+
+          <!-- Source selector -->
+          <div class="mb-5">
+            <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Source</p>
+            <div class="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onclick={() => (dmSource = "coresignal")}
+                class="text-left p-3 rounded-xl border-2 transition-all {dmSource === 'coresignal' ? 'border-indigo-400 bg-indigo-50' : 'border-border hover:border-indigo-200 hover:bg-muted/30'}"
+              >
+                <div class="flex items-center gap-2">
+                  <div class="w-2 h-2 rounded-full {dmSource === 'coresignal' ? 'bg-indigo-500' : 'bg-muted-foreground/30'}"></div>
+                  <span class="text-sm font-medium">Coresignal</span>
+                </div>
+                <p class="text-xs text-muted-foreground mt-1">Base de données pro enrichie. Idéal pour des boîtes connues.</p>
+              </button>
+              <button
+                type="button"
+                onclick={() => (dmSource = "web")}
+                class="text-left p-3 rounded-xl border-2 transition-all {dmSource === 'web' ? 'border-indigo-400 bg-indigo-50' : 'border-border hover:border-indigo-200 hover:bg-muted/30'}"
+              >
+                <div class="flex items-center gap-2">
+                  <div class="w-2 h-2 rounded-full {dmSource === 'web' ? 'bg-indigo-500' : 'bg-muted-foreground/30'}"></div>
+                  <span class="text-sm font-medium">Recherche web</span>
+                </div>
+                <p class="text-xs text-muted-foreground mt-1">Google + LinkedIn via IA. Utile quand Coresignal ne couvre pas.</p>
+              </button>
+            </div>
+          </div>
+
           <div class="space-y-3">
             {#each ROLE_CATEGORIES as cat}
               {@const checked = dmSelectedRoles.has(cat.key)}
