@@ -14,6 +14,7 @@ const migrations = [
   "0006_backfill_send_dates.sql",
   "0007_offer_disabled.sql",
   "0008_sender_first_name.sql",
+  "0009_contact_in_crm.sql",
 ];
 
 for (const file of migrations) {

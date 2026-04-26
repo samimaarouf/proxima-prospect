@@ -42,6 +42,7 @@
     companyName: string;
     offerUrl: string | null;
     updatedAt?: string | null;
+    inCrm?: boolean | null;
   };
 
   let {
@@ -732,6 +733,23 @@
     }
   }
 
+  async function toggleCrm(contact: Contact) {
+    const newValue = !contact.inCrm;
+    try {
+      const res = await fetch(`/api/contacts/${contact.id}/update-status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inCrm: newValue }),
+      });
+      if (!res.ok) throw new Error();
+      const updated = await res.json();
+      onContactUpdated?.(updated);
+      toast.success(newValue ? "Contact ajouté au CRM" : "Contact retiré du CRM");
+    } catch {
+      toast.error("Erreur lors de la mise à jour CRM");
+    }
+  }
+
   function delay(ms: number) {
     return new Promise((r) => setTimeout(r, ms));
   }
@@ -1174,6 +1192,21 @@
 
             <!-- Action buttons -->
             <div class="flex items-center gap-1.5 flex-shrink-0">
+              <button
+                onclick={() => toggleCrm(contact)}
+                class={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-md border transition-colors ${
+                  contact.inCrm
+                    ? "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700"
+                    : "border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                }`}
+                title={contact.inCrm ? "Retirer du CRM" : "Ajouter au CRM"}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="3" width="20" height="14" rx="2"/>
+                  <path d="M8 21h8M12 17v4"/>
+                </svg>
+                {contact.inCrm ? "Dans le CRM" : "CRM"}
+              </button>
               <button
                 onclick={() => deleteContact(contact)}
                 class="p-1.5 rounded hover:bg-red-50 hover:text-red-500 text-muted-foreground transition-colors"

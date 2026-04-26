@@ -17,6 +17,8 @@ const STRING_FIELDS = [
   "linkedinUrl",
 ] as const;
 
+const BOOLEAN_FIELDS = ["inCrm"] as const;
+
 const DATE_FIELDS = [
   "emailSentAt",
   "linkedinSentAt",
@@ -48,6 +50,12 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   for (const key of STRING_FIELDS) {
     if (key in body) {
       updateData[key] = body[key];
+    }
+  }
+
+  for (const key of BOOLEAN_FIELDS) {
+    if (key in body) {
+      updateData[key] = Boolean(body[key]);
     }
   }
 

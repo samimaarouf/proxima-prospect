@@ -79,6 +79,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
         // CRM for history / follow-ups, but the UI renders them greyed out and
         // any outreach attempt is blocked server-side.
         or(
+          eq(prospectContact.inCrm, true),
           isNotNull(prospectContact.emailSentAt),
           isNotNull(prospectContact.linkedinSentAt),
           isNotNull(prospectContact.whatsappSentAt),
