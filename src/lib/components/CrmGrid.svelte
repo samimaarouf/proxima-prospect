@@ -70,6 +70,8 @@
   let loading = $state(true);
   let quickFilter = $state("");
 
+  let { listId = undefined }: { listId?: string } = $props();
+
   // Company sheet (opened by clicking on an offer row)
   let companySheetName = $state<string | null>(null);
 
@@ -158,7 +160,8 @@
   async function loadCrm() {
     loading = true;
     try {
-      const res = await fetch("/api/crm");
+      const url = listId ? `/api/crm?listId=${listId}` : "/api/crm";
+      const res = await fetch(url);
       if (!res.ok) throw new Error("Erreur de chargement");
       rows = await res.json();
     } catch (err) {

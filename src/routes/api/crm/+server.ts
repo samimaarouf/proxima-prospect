@@ -17,8 +17,10 @@ import type { RequestHandler } from "./$types";
  *  2. Everything else (including closed contacts) comes afterwards.
  *  3. Secondary tie-breaker: most recent send date across any channel.
  */
-export const GET: RequestHandler = async ({ locals }) => {
+export const GET: RequestHandler = async ({ locals, url }) => {
   if (!locals.user) throw redirect(302, "/login");
+
+  const listId = url.searchParams.get("listId");
 
   const priorityExpr = sql<number>`CASE
       WHEN ${prospectContact.contactStatus} IS DISTINCT FROM 'closed'
@@ -72,6 +74,7 @@ export const GET: RequestHandler = async ({ locals }) => {
     .where(
       and(
         eq(prospectList.userId, locals.user.id),
+        ...(listId ? [eq(prospectList.id, listId)] : []),
         // Contacts attached to disabled (archived) offers still show up in the
         // CRM for history / follow-ups, but the UI renders them greyed out and
         // any outreach attempt is blocked server-side.

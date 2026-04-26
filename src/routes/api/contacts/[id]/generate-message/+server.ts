@@ -165,59 +165,45 @@ Réponds en 1-2 phrases FACTUELLES et PRÉCISES que je pourrai glisser dans un e
     // Search not available or failed — continue without hook
   }
 
-  // WhatsApp et email : même modèle de texte ; l'objet sert aussi pour réutiliser le corps sur WhatsApp (l'UI extrait le corps).
-  const longChannelInstructions =
-    "Message pour email OU WhatsApp : même contenu. Première ligne obligatoire : 'Objet: …' (accroche percutante). Saut de ligne, puis corps professionnel court : 6-8 lignes. Le corps (après l'objet) sera réutilisé tel quel pour WhatsApp.";
+  // Nettoyage du titre de poste : supprime hashtags, parenthèses, suffixes superflus.
+  const offerTitleClean = (offer.offerTitle || contactJobTitle || "poste Sales")
+    .replace(/#\w+/g, "")
+    .replace(/\(.*?\)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 
-  const systemPrompt = `Rôle : Tu es un chasseur de têtes spécialisé exclusivement dans les profils Sales. Style : partenaire d'affaires — direct, sobre, sans fioritures, extrêmement pragmatique. Tu écris pour ${recruiterName}.
+  const fallbackHook =
+    'Corrigez-moi si je me trompe, mais si vous cherchez encore, c\'est peut-être parce que comme souvent les profils reçus sont "bons sur le papier", mais peu vraiment alignés avec votre cycle de vente.';
 
-Contexte :
-- Entreprise cible : ${offer.companyName}
-- Interlocuteur : ${contactName}${contactJobTitle ? `, ${contactJobTitle}` : ""} — prénom du client à utiliser après « Bonjour » : ${contactFirstName}
-- Poste ouvert : ${offer.offerTitle || "non précisé"}
-${offer.offerContent ? `- Description de l'offre : ${offer.offerContent.substring(0, 800)}` : ""}
-${linkedinSummary ? `- Profil LinkedIn : ${linkedinSummary}` : ""}
-${companyHook ? `- Contexte de recrutement trouvé (à utiliser comme hook d'accroche) : ${companyHook}` : ""}
+  const hook = fallbackHook;
 
-Pitch recruteur :
-${pitch || `${recruiterName} — cabinet de recrutement spécialisé profils Sales.`}
+  const link =
+    channel === "email"
+      ? '<a href="https://proxima-agents.com/">proxima-agents.com</a>'
+      : "https://proxima-agents.com/";
 
-Canal : ${longChannelInstructions}
+  const subject = `Re: Offre de ${offerTitleClean}`;
 
-Structure OBLIGATOIRE — reproduis EXACTEMENT ce modèle, mot pour mot, en ne changeant que les éléments entre crochets :
+  const messageBody = [
+    `Bonjour ${contactFirstName},`,
+    "",
+    `Je suis tombé sur votre offre de ${offerTitleClean} chez ${offer.companyName}.`,
+    "",
+    hook,
+    "",
+    "De notre côté, on a pris le sujet à l'envers : on identifie à l'aide de notre moteur interne des profils déjà alignés avec votre cycle de vente, puis on valide avec eux leur intérêt avant même de vous les présenter.",
+    "",
+    "J'ai commencé à jeter un œil de mon côté, il y a déjà quelques profils qui pourraient bien coller.",
+    "",
+    `Je vous laisse regarder notre approche : ${link}`,
+    "",
+    "Si ça vous parle, je peux vous envoyer une première shortlist dans la journée.",
+    recruiterFirstName,
+  ].join("\n");
 
-Bonjour [prénom du contact],
-
-Je suis tombé sur votre offre de [intitulé du poste simplifié — titre principal uniquement, sans hashtags ni parenthèses] chez [entreprise].
-
-[SI hook contextuel disponible : utilise-le en 1 phrase. SINON : "Corrigez-moi si je me trompe, mais si vous cherchez encore, c'est peut-être parce que comme souvent les profils reçus sont "bons sur le papier", mais peu vraiment alignés avec le cycle de vente."]
-
-De notre côté, on a pris le sujet à l'envers : on identifie à l'aide de notre moteur interne des profils déjà alignés avec votre cycle de vente, puis on valide avec eux leur intérêt avant même de vous les présenter.
-
-J'ai commencé à jeter un œil de mon côté, il y a déjà quelques profils qui pourraient bien coller.
-
-Je vous laisse regarder notre approche : ${channel === "email" ? '<a href="https://proxima-agents.com/">proxima-agents.com</a>' : "https://proxima-agents.com/"}
-
-Si ça vous parle, je peux vous envoyer une première shortlist dans la journée.
-[Prénom du recruteur — utiliser : ${recruiterFirstName}]
-
-RÈGLES STRICTES :
-- Ne modifier QUE : le prénom du contact (${contactFirstName}), le poste, l'entreprise, et la phrase d'accroche si hook disponible
-- Aucune mention d'expérience, de secteur, d'entreprises similaires, de prix ou de conditions
-- Aucune reformulation — les phrases sont FIGÉES mot pour mot
-- Pas de tirets "---" dans le message généré
-- Toujours commencer par "Bonjour [prénom],"${channel === "email" ? '\n- Conserver la balise <a href="https://proxima-agents.com/">proxima-agents.com</a> telle quelle dans le message' : ""}
-
-Objectif : que le prospect se dise "Ce recruteur sait exactement qui je cherche et ça ne me coûte rien d'essayer."${extraInstructions ? `\n\nInstructions supplémentaires (prioritaires) :\n${extraInstructions}` : ""}`;
+  const aiMessage = `Objet: ${subject}\n\n${messageBody}`;
 
   try {
-    const aiMessage = await chatComplete({
-      systemPrompt,
-      userPrompt: "Génère le message de prospection.",
-      maxTokens: 700,
-      temperature: 0.75,
-    });
-
     const [updated] = await db
       .update(prospectContact)
       .set({ aiMessage, updatedAt: new Date() })

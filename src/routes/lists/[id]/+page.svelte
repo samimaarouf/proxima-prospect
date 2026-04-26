@@ -5,6 +5,7 @@
   import AgGrid from "$lib/components/custom/AgGrid/AgGrid.svelte";
   import OfferSheet from "$lib/components/OfferSheet.svelte";
   import CompanySheet from "$lib/components/CompanySheet.svelte";
+  import CrmGrid from "$lib/components/CrmGrid.svelte";
   import { normalizeCompany } from "$lib/offerMatch";
   import type { PageData } from "./$types";
   import type {
@@ -34,11 +35,14 @@
   let importing = $state(false);
   let autoEnriching = $state(false);
   let autoEnrichProgress = $state({ current: 0, total: 0 });
+  let generatingAllMessages = $state(false);
+  let generateMsgProgress = $state({ current: 0, total: 0 });
   let autoScraping = $state(false);
   let autoScrapeProgress = $state({ current: 0, total: 0 });
   let quickFilter = $state("");
   let editingListName = $state(false);
   let listNameDraft = $state(list.name);
+  let activeListTab = $state<"prospection" | "crm">("prospection");
 
   function focusOnMount(node: HTMLElement) {
     node.focus();
@@ -671,6 +675,31 @@
   }
 
   // ===========================
+  // Generate messages for all contacts in the list
+  // ===========================
+  async function generateAllListMessages() {
+    const todo = contacts.filter((c) => c.id);
+    if (!todo.length) return;
+    generatingAllMessages = true;
+    generateMsgProgress = { current: 0, total: todo.length };
+    let done = 0;
+    for (const contact of todo) {
+      try {
+        await fetch(`/api/contacts/${contact.id}/generate-message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: "email" }),
+        });
+        done++;
+      } catch { /* continue */ }
+      generateMsgProgress = { current: done, total: todo.length };
+      await delay(300);
+    }
+    generatingAllMessages = false;
+    toast.success(`${done} message${done !== 1 ? "s" : ""} générés !`);
+  }
+
+  // ===========================
   // Scrape offer URL
   // ===========================
   async function scrapeOffer(offerId: string): Promise<Offer | null> {
@@ -871,12 +900,30 @@
           <span class="w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></span>
           Enrichissement {autoEnrichProgress.current}/{autoEnrichProgress.total}
         </span>
+      {:else if generatingAllMessages}
+        <span class="text-xs text-violet-600 flex items-center gap-1.5">
+          <span class="w-3 h-3 border-2 border-violet-600 border-t-transparent rounded-full animate-spin"></span>
+          Messages {generateMsgProgress.current}/{generateMsgProgress.total}
+        </span>
       {/if}
     </div>
     <div class="flex items-center gap-3 flex-shrink-0">
       <span class="text-sm text-muted-foreground">
         {groupedRows.length} entreprise{groupedRows.length !== 1 ? "s" : ""} · {offers.length} offre{offers.length !== 1 ? "s" : ""} · {totalContacts} contact{totalContacts !== 1 ? "s" : ""}
       </span>
+      <button
+        onclick={generateAllListMessages}
+        disabled={generatingAllMessages || contacts.length === 0}
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white rounded-md text-sm hover:bg-violet-700 disabled:opacity-50 transition-colors"
+      >
+        {#if generatingAllMessages}
+          <span class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+          Génération…
+        {:else}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L13.09 8.26L19 6L14.74 10.91L21 12L14.74 13.09L19 18L13.09 15.74L12 22L10.91 15.74L5 18L9.26 13.09L3 12L9.26 10.91L5 6L10.91 8.26L12 2Z"/></svg>
+          Générer tous les messages
+        {/if}
+      </button>
       <button
         onclick={handleExport}
         class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-input rounded-md text-sm hover:bg-accent transition-colors"
@@ -894,53 +941,91 @@
     </div>
   </div>
 
-  {#if list.pitch}
-    <div class="px-6 py-2 bg-indigo-50 border-b border-indigo-100">
-      <p class="text-sm text-indigo-700"><span class="font-medium">Pitch :</span> {list.pitch}</p>
-    </div>
-  {/if}
-
-  <!-- Toolbar -->
-  <div class="toolbar-bar">
-    <input
-      type="text"
-      bind:value={quickFilter}
-      placeholder="Rechercher une offre ou entreprise…"
-      class="px-3 py-1.5 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring w-64"
-    />
-    <span class="text-xs text-muted-foreground">
-      Cliquez sur une ligne pour voir les contacts et générer les messages
-    </span>
+  <!-- Tabs: Prospection | CRM -->
+  <div class="border-b border-border bg-card px-6">
+    <nav class="flex gap-1" role="tablist">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeListTab === "prospection"}
+        onclick={() => (activeListTab = "prospection")}
+        class={`relative px-4 py-3 text-sm font-medium transition-colors -mb-px ${
+          activeListTab === "prospection"
+            ? "text-primary border-b-2 border-primary"
+            : "text-muted-foreground hover:text-foreground border-b-2 border-transparent"
+        }`}
+      >
+        Prospection
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeListTab === "crm"}
+        onclick={() => (activeListTab = "crm")}
+        class={`relative px-4 py-3 text-sm font-medium transition-colors -mb-px ${
+          activeListTab === "crm"
+            ? "text-primary border-b-2 border-primary"
+            : "text-muted-foreground hover:text-foreground border-b-2 border-transparent"
+        }`}
+      >
+        CRM
+      </button>
+    </nav>
   </div>
 
-  <!-- Grid -->
-  {#if offers.length === 0}
-    <div class="flex flex-col items-center justify-center h-64 text-muted-foreground px-6">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-4 opacity-30"><path d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
-      <p class="text-base font-medium mb-2">Aucune offre</p>
-      <p class="text-sm mb-4">Importez un fichier Excel ou CSV pour commencer</p>
-      <button
-        onclick={() => (showImportDialog = true)}
-        class="px-5 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-md text-sm font-medium transition-colors"
-      >
-        Importer
-      </button>
-    </div>
-  {:else}
-    <div class="grid-container" style="height: {gridHeight}px;">
-      <AgGrid
-        rowData={groupedRows}
-        {gridOptions}
-        quickFilterText={quickFilter}
-        gridStyle="height: 100%;"
-        nbRows={20}
+  {#if activeListTab === "prospection"}
+    {#if list.pitch}
+      <div class="px-6 py-2 bg-indigo-50 border-b border-indigo-100">
+        <p class="text-sm text-indigo-700"><span class="font-medium">Pitch :</span> {list.pitch}</p>
+      </div>
+    {/if}
+
+    <!-- Toolbar -->
+    <div class="toolbar-bar">
+      <input
+        type="text"
+        bind:value={quickFilter}
+        placeholder="Rechercher une offre ou entreprise…"
+        class="px-3 py-1.5 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring w-64"
       />
-      <button
-        class="resize-handle"
-        type="button"
-        onmousedown={startResize}
-        aria-label="Redimensionner la grille"
-      ></button>
+      <span class="text-xs text-muted-foreground">
+        Cliquez sur une ligne pour voir les contacts et générer les messages
+      </span>
+    </div>
+
+    <!-- Grid -->
+    {#if offers.length === 0}
+      <div class="flex flex-col items-center justify-center h-64 text-muted-foreground px-6">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-4 opacity-30"><path d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+        <p class="text-base font-medium mb-2">Aucune offre</p>
+        <p class="text-sm mb-4">Importez un fichier Excel ou CSV pour commencer</p>
+        <button
+          onclick={() => (showImportDialog = true)}
+          class="px-5 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-md text-sm font-medium transition-colors"
+        >
+          Importer
+        </button>
+      </div>
+    {:else}
+      <div class="grid-container" style="height: {gridHeight}px;">
+        <AgGrid
+          rowData={groupedRows}
+          {gridOptions}
+          quickFilterText={quickFilter}
+          gridStyle="height: 100%;"
+          nbRows={20}
+        />
+        <button
+          class="resize-handle"
+          type="button"
+          onmousedown={startResize}
+          aria-label="Redimensionner la grille"
+        ></button>
+      </div>
+    {/if}
+  {:else}
+    <div class="px-6 py-6">
+      <CrmGrid listId={list.id} />
     </div>
   {/if}
 </div>
