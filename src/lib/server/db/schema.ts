@@ -139,7 +139,7 @@ export const prospectContact = pgTable("prospect_contact", {
   whatsappSentAt: timestamp("whatsapp_sent_at"),
   calledAt: timestamp("called_at"),
   nextStepAt: timestamp("next_step_at"),
-  inCrm: boolean("in_crm").default(false).notNull(),
+  inCrm: boolean("in_crm"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({

@@ -66,6 +66,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
       nextStep: prospectContact.nextStep,
       contactStatus: prospectContact.contactStatus,
       notes: prospectContact.notes,
+      inCrm: prospectContact.inCrm,
       priority: priorityExpr,
     })
     .from(prospectContact)
@@ -75,9 +76,12 @@ export const GET: RequestHandler = async ({ locals, url }) => {
       and(
         eq(prospectList.userId, locals.user.id),
         ...(listId ? [eq(prospectList.id, listId)] : []),
-        // Contacts attached to disabled (archived) offers still show up in the
-        // CRM for history / follow-ups, but the UI renders them greyed out and
-        // any outreach attempt is blocked server-side.
+        // inCrm = false means explicitly removed from CRM; null = auto.
+        // A contact appears in the CRM when:
+        //   - inCrm is explicitly true (manually added), OR
+        //   - inCrm is null (auto) AND has been contacted on at least one channel
+        // Contacts with inCrm = false are always hidden.
+        sql`${prospectContact.inCrm} IS DISTINCT FROM false`,
         or(
           eq(prospectContact.inCrm, true),
           isNotNull(prospectContact.emailSentAt),

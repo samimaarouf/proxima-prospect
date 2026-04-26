@@ -43,6 +43,7 @@
     nextStep: string | null;
     contactStatus: string | null;
     notes: string | null;
+    inCrm: boolean | null;
     priority: number;
   };
 
@@ -168,6 +169,22 @@
       toast.error("Impossible de charger le CRM");
     } finally {
       loading = false;
+    }
+  }
+
+  async function removeFromCrm(row: CrmRow) {
+    rows = rows.filter((r) => r.id !== row.id);
+    try {
+      const res = await fetch(`/api/contacts/${row.id}/update-status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inCrm: false }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success("Contact retiré du CRM");
+    } catch {
+      rows = [...rows, row];
+      toast.error("Erreur lors de la mise à jour");
     }
   }
 
@@ -825,6 +842,32 @@
       cellRenderer: notesRenderer,
       filter: "agTextColumnFilter",
       sortable: false,
+    },
+    {
+      colId: "actions",
+      headerName: "",
+      width: 48,
+      pinned: "right" as const,
+      sortable: false,
+      filter: false,
+      resizable: false,
+      cellRenderer: (params: { data?: CrmRow }) => {
+        const row = params.data;
+        if (!row) return null;
+        const btn = document.createElement("button");
+        btn.title = "Retirer du CRM";
+        btn.style.cssText =
+          "display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid #fecaca;color:#ef4444;background:transparent;cursor:pointer;transition:background 0.15s;";
+        btn.innerHTML =
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
+        btn.addEventListener("mouseenter", () => { btn.style.background = "#fef2f2"; });
+        btn.addEventListener("mouseleave", () => { btn.style.background = "transparent"; });
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          removeFromCrm(row);
+        });
+        return btn;
+      },
     },
   ];
 

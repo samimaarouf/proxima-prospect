@@ -15,6 +15,7 @@ const migrations = [
   "0007_offer_disabled.sql",
   "0008_sender_first_name.sql",
   "0009_contact_in_crm.sql",
+  "0010_in_crm_nullable.sql",
 ];
 
 for (const file of migrations) {

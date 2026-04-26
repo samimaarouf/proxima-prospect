@@ -55,7 +55,7 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 
   for (const key of BOOLEAN_FIELDS) {
     if (key in body) {
-      updateData[key] = Boolean(body[key]);
+      updateData[key] = body[key] === null ? null : Boolean(body[key]);
     }
   }
 
