@@ -241,7 +241,6 @@
   let showDmModal = $state(false);
   let dmStep = $state<"select" | "results">("select");
   let dmSelectedRoles = $state<Set<string>>(new Set(["founder_ceo"]));
-  let dmSource = $state<"coresignal" | "web">("coresignal");
   let dmSearching = $state(false);
   let dmCandidates = $state<Candidate[]>([]);
   let dmSelectedCandidates = $state<Set<number>>(new Set());
@@ -253,10 +252,7 @@
     dmError = null;
     dmSearching = true;
     try {
-      const endpoint = dmSource === "web"
-        ? `/api/offers/${offer.id}/find-decision-makers-web`
-        : `/api/offers/${offer.id}/find-decision-makers`;
-      const res = await fetch(endpoint, {
+      const res = await fetch(`/api/offers/${offer.id}/find-decision-makers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ roles: Array.from(dmSelectedRoles) }),
@@ -1610,37 +1606,8 @@
 
         {#if dmStep === "select"}
           <p class="text-sm text-muted-foreground mb-4">
-            Sélectionnez les catégories de décisionnaires à rechercher chez <strong>{offer.companyName}</strong>.
+            Sélectionnez les catégories de décisionnaires à rechercher chez <strong>{offer.companyName}</strong> via LinkedIn.
           </p>
-
-          <!-- Source selector -->
-          <div class="mb-5">
-            <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Source</p>
-            <div class="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onclick={() => (dmSource = "coresignal")}
-                class="text-left p-3 rounded-xl border-2 transition-all {dmSource === 'coresignal' ? 'border-indigo-400 bg-indigo-50' : 'border-border hover:border-indigo-200 hover:bg-muted/30'}"
-              >
-                <div class="flex items-center gap-2">
-                  <div class="w-2 h-2 rounded-full {dmSource === 'coresignal' ? 'bg-indigo-500' : 'bg-muted-foreground/30'}"></div>
-                  <span class="text-sm font-medium">Coresignal</span>
-                </div>
-                <p class="text-xs text-muted-foreground mt-1">Base de données pro enrichie. Idéal pour des boîtes connues.</p>
-              </button>
-              <button
-                type="button"
-                onclick={() => (dmSource = "web")}
-                class="text-left p-3 rounded-xl border-2 transition-all {dmSource === 'web' ? 'border-indigo-400 bg-indigo-50' : 'border-border hover:border-indigo-200 hover:bg-muted/30'}"
-              >
-                <div class="flex items-center gap-2">
-                  <div class="w-2 h-2 rounded-full {dmSource === 'web' ? 'bg-indigo-500' : 'bg-muted-foreground/30'}"></div>
-                  <span class="text-sm font-medium">LinkedIn</span>
-                </div>
-                <p class="text-xs text-muted-foreground mt-1">Recherche directe sur LinkedIn via ton compte connecté.</p>
-              </button>
-            </div>
-          </div>
 
           <div class="space-y-3">
             {#each ROLE_CATEGORIES as cat}

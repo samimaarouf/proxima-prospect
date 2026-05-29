@@ -2,8 +2,7 @@ import { json } from "@sveltejs/kit";
 import { db } from "$lib/server/db";
 import { prospectOffer, prospectList } from "$lib/server/db/schema";
 import { eq } from "drizzle-orm";
-import OpenAI from "openai";
-import { env } from "$env/dynamic/private";
+import { chatCompleteJson, CLAUDE_FAST_MODEL } from "$lib/server/aiChat";
 import type { RequestHandler } from "./$types";
 
 export const POST: RequestHandler = async ({ locals, params }) => {
@@ -80,46 +79,26 @@ export const POST: RequestHandler = async ({ locals, params }) => {
   // Truncate to ~4000 chars to stay in token budget
   const truncated = pageText.slice(0, 4000);
 
-  // Ask OpenAI to extract title and location
+  // Ask Claude to extract title and location
   try {
-    const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `Tu es un assistant qui extrait des informations structurées à partir du contenu d'une page d'offre d'emploi.
-Réponds UNIQUEMENT avec un objet JSON valide contenant les champs suivants :
-- "title": l'intitulé exact du poste (string, ou null si introuvable)
-- "location": la localisation du poste, ville et/ou pays (string, ou null si introuvable)
-
-Ne fournis aucune explication, uniquement le JSON brut.`,
-        },
-        {
-          role: "user",
-          content: `Voici le contenu de la page d'offre d'emploi :\n\n${truncated}`,
-        },
-      ],
-      max_tokens: 150,
+    const extracted = await chatCompleteJson<{
+      title?: string | null;
+      location?: string | null;
+    }>({
+      model: CLAUDE_FAST_MODEL,
       temperature: 0,
-      response_format: { type: "json_object" },
+      maxTokens: 150,
+      systemPrompt: `Tu extrais des informations structurées d'une page d'offre d'emploi.
+JSON : {"title": "intitulé exact ou null", "location": "ville/pays ou null"}`,
+      userPrompt: `Contenu de la page :\n\n${truncated}`,
     });
-
-    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
-    let extracted: { title?: string | null; location?: string | null } = {};
-
-    try {
-      extracted = JSON.parse(raw);
-    } catch {
-      return json({ error: "Impossible de parser la réponse de l'IA" }, { status: 500 });
-    }
 
     const offerTitle = extracted.title?.trim() || null;
     const offerLocation = extracted.location?.trim() || null;
+    const offerContent = truncated.slice(0, 2000).trim() || null;
 
-    if (!offerTitle && !offerLocation) {
-      return json({ error: "Titre et localisation introuvables dans la page" }, { status: 422 });
+    if (!offerTitle && !offerLocation && !offerContent) {
+      return json({ error: "Titre, localisation et contenu introuvables dans la page" }, { status: 422 });
     }
 
     // Save to DB
@@ -128,6 +107,7 @@ Ne fournis aucune explication, uniquement le JSON brut.`,
       .set({
         ...(offerTitle ? { offerTitle } : {}),
         ...(offerLocation ? { offerLocation } : {}),
+        ...(offerContent ? { offerContent } : {}),
       })
       .where(eq(prospectOffer.id, params.id))
       .returning();

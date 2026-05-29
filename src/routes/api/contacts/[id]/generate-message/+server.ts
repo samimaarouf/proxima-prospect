@@ -2,9 +2,11 @@ import { json } from "@sveltejs/kit";
 import { db } from "$lib/server/db";
 import { prospectContact, prospectOffer, prospectList, user } from "$lib/server/db/schema";
 import { eq } from "drizzle-orm";
-import OpenAI from "openai";
-import { env } from "$env/dynamic/private";
 import { chatComplete } from "$lib/server/aiChat";
+import { generateColdEmail } from "$lib/server/agents/coldEmailAgent";
+import { buildPersonalizationContext } from "$lib/server/personalization/buildContext";
+import { cleanOfferTitle } from "$lib/server/personalization/prompts";
+import { resolveOfferProposition } from "$lib/server/personalization/resolveOfferProposition";
 import type { RequestHandler } from "./$types";
 
 function firstNameFromFullName(fullName: string): string {
@@ -53,7 +55,12 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const pitch = listResult[0]?.pitch || "";
 
   const userProfile = await db
-    .select({ name: user.name, company: user.company, senderFirstName: user.senderFirstName })
+    .select({
+      name: user.name,
+      company: user.company,
+      senderFirstName: user.senderFirstName,
+      unipileLinkedInAccountId: user.unipileLinkedInAccountId,
+    })
     .from(user)
     .where(eq(user.id, locals.user.id))
     .limit(1);
@@ -67,9 +74,6 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const recruiterFirstName =
     customSenderFirstName || firstNameFromFullName(rawRecruiterName) || rawRecruiterName;
 
-  // Si l'utilisateur a défini un prénom d'expéditeur personnalisé, on remplace
-  // la première partie du nom complet pour éviter que l'IA ne mélange les prénoms
-  // (ex : "Sami Maarouf" + override "Alex" → "Alex Maarouf").
   const recruiterName = (() => {
     if (!customSenderFirstName) return rawRecruiterName;
     const parts = rawRecruiterName.trim().split(/\s+/).filter(Boolean);
@@ -79,14 +83,20 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const contactJobTitle = contact.jobTitle || "";
   const linkedinSummary = contact.linkedinSummary || "";
 
-  // OpenAI client is kept only for the web-search hook (cheap + reliable).
-  // Message generation itself now goes through `chatComplete` which prefers
-  // Claude Sonnet 4.5 when `ANTHROPIC_API_KEY` is set.
-  const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-
   // ── LinkedIn : court, distinct de WhatsApp / email ; stocké dans ai_message_linkedin ──
   if (channel === "linkedin") {
-    const linkedinSystemPrompt = `Tu es un chasseur de têtes spécialisé profils Sales. Tu rédiges une note d'invitation LinkedIn (connexion) que ${recruiterName} enverra.
+    const offerTitleClean = cleanOfferTitle(
+      offer.offerTitle || contactJobTitle || "poste",
+    );
+    const offerProposition = await resolveOfferProposition({
+      companyName: offer.companyName,
+      offerTitle: offerTitleClean,
+      offerExcerpt: offer.offerContent?.trim().slice(0, 500) ?? "",
+      offerLocation: offer.offerLocation,
+      pitch,
+    });
+
+    const linkedinSystemPrompt = `Tu es un chasseur de têtes spécialisé ${offerProposition.recruiterSpecialty}. Tu rédiges une note d'invitation LinkedIn (connexion) que ${recruiterName} enverra.
 
 CONTRAINTE ABSOLUE : le message final doit faire STRICTEMENT moins de 300 caractères (espaces inclus), sans saut de ligne (une seule ligne ou tout sur une ligne).
 
@@ -99,7 +109,7 @@ SIGNATURE :
 
 CONTENU :
 - Mentionner que tu as repéré l'offre (titre court du poste) chez l'entreprise cible.
-- Une phrase sur le fait que tu as des profils Sales alignés / à proposer.
+- Une phrase sur le fait que tu as des ${offerProposition.recruiterSpecialty} alignés / à proposer.
 - Proposition courte d'échange. Ton professionnel, direct.
 
 INTERDIT : confondre recruteur et client, inventer un prénom client différent de celui fourni.${extraInstructions ? `\n\nInstructions supplémentaires :\n${extraInstructions}` : ""}`;
@@ -108,7 +118,7 @@ INTERDIT : confondre recruteur et client, inventer un prénom client différent 
 - Prénom du CLIENT (destinataire, à mettre après "Bonjour") : ${contactFirstName}
 - Nom complet client (référence) : ${contactName}
 - Entreprise : ${offer.companyName}
-- Poste à pourvoir (raccourcis si besoin) : ${offer.offerTitle || contactJobTitle || "poste Sales"}
+- Poste à pourvoir (raccourcis si besoin) : ${offerTitleClean}
 ${linkedinSummary ? `- Résumé profil LinkedIn : ${linkedinSummary.slice(0, 400)}` : ""}`;
 
     try {
@@ -143,74 +153,44 @@ ${linkedinSummary ? `- Résumé profil LinkedIn : ${linkedinSummary.slice(0, 400
     }
   }
 
-  // ── WhatsApp / Email : web search hook + full template ───────────────────────
-  let companyHook = "";
+  // ── WhatsApp / Email : agent cold email spécialisé ───────────────────────────
   try {
-    const searchResponse = await (openai as any).responses.create({
-      model: "gpt-4o-mini",
-      tools: [{ type: "web_search_preview" }],
-      input: `Fais une recherche rapide sur l'entreprise "${offer.companyName}" et son offre de recrutement pour un "${offer.offerTitle || "poste Sales"}".
-Trouve un élément concret et récent qui expliquerait POURQUOI ils recrutent maintenant :
-- Levée de fonds récente ?
-- Départ d'un collaborateur Sales notable ?
-- Croissance annoncée / expansion géographique ?
-- Contrat signé / nouveau marché ?
-Réponds en 1-2 phrases FACTUELLES et PRÉCISES que je pourrai glisser dans un email de prospection. Si tu ne trouves rien de concret, réponds juste "rien de trouvé".`,
+    const ctx = await buildPersonalizationContext({
+      contact,
+      offer,
+      pitch,
+      recruiterName,
+      recruiterFirstName,
+      recruiterCompany,
+      unipileLinkedInAccountId: userProfile[0]?.unipileLinkedInAccountId,
+      fetchPosts: channel === "email",
     });
-    const hookText: string = searchResponse.output_text?.trim() || "";
-    if (hookText && hookText.toLowerCase() !== "rien de trouvé") {
-      companyHook = hookText;
-    }
-  } catch {
-    // Search not available or failed — continue without hook
-  }
 
-  // Nettoyage du titre de poste : supprime hashtags, parenthèses, suffixes superflus.
-  const offerTitleClean = (offer.offerTitle || contactJobTitle || "poste Sales")
-    .replace(/#\w+/g, "")
-    .replace(/\(.*?\)/g, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+    const { message: aiMessage, warnings, styleVariant } = await generateColdEmail({
+      ctx,
+      channel,
+      contactId: params.id,
+      extraInstructions,
+    });
 
-  const fallbackHook =
-    'Corrigez-moi si je me trompe, mais si vous cherchez encore, c\'est peut-être parce que comme souvent les profils reçus sont "bons sur le papier", mais peu vraiment alignés avec votre cycle de vente.';
-
-  const hook = fallbackHook;
-
-  const link =
-    channel === "email"
-      ? '<a href="https://proxima-agents.com/">proxima-agents.com</a>'
-      : "https://proxima-agents.com/";
-
-  const subject = `Re: Offre de ${offerTitleClean}`;
-
-  const messageBody = [
-    `Bonjour ${contactFirstName},`,
-    "",
-    `Je suis tombé sur votre offre de ${offerTitleClean} chez ${offer.companyName}.`,
-    "",
-    hook,
-    "",
-    "De notre côté, on a pris le sujet à l'envers : on identifie à l'aide de notre moteur interne des profils déjà alignés avec votre cycle de vente, puis on valide avec eux leur intérêt avant même de vous les présenter.",
-    "",
-    "J'ai commencé à jeter un œil de mon côté, il y a déjà quelques profils qui pourraient bien coller.",
-    "",
-    `Je vous laisse regarder notre approche : ${link}`,
-    "",
-    "Si ça vous parle, je peux vous envoyer une première shortlist dans la journée.",
-    recruiterFirstName,
-  ].join("\n");
-
-  const aiMessage = `Objet: ${subject}\n\n${messageBody}`;
-
-  try {
     const [updated] = await db
       .update(prospectContact)
       .set({ aiMessage, updatedAt: new Date() })
       .where(eq(prospectContact.id, params.id))
       .returning();
 
-    return json(updated);
+    return json({
+      ...updated,
+      personalization: {
+        qualityScore: ctx.qualityScore,
+        segment: ctx.segment,
+        roleFamily: ctx.offerProposition.roleFamily,
+        offerPropositionSource: ctx.offerProposition.source,
+        styleVariant,
+        signalsUsed: ctx.signals.map((s) => s.type),
+        warnings,
+      },
+    });
   } catch (err) {
     console.error("Message generation error:", err);
     return json(

@@ -3,8 +3,7 @@ import { db } from "$lib/server/db";
 import { prospectContact, prospectOffer, prospectList, user } from "$lib/server/db/schema";
 import { eq } from "drizzle-orm";
 import { UnipileService } from "$lib/services/UnipileService";
-import OpenAI from "openai";
-import { env } from "$env/dynamic/private";
+import { chatComplete, CLAUDE_FAST_MODEL } from "$lib/server/aiChat";
 import { nameFromLinkedInSlug, looksLikeJobTitleNotName } from "$lib/linkedinUrl";
 import { resolveLinkedInNameViaWebSearch } from "$lib/server/resolveLinkedInName";
 import type { RequestHandler } from "./$types";
@@ -79,7 +78,7 @@ export const POST: RequestHandler = async ({ locals, params }) => {
     //   1. Unipile first_name + last_name (what we just computed)
     //   2. Name derived from the LinkedIn slug (free, but loses quality when
     //      the slug is a single token or suffixed with a random hash).
-    //   3. Web search via OpenAI using the company/offer context (paid).
+    //   3. Inférence Claude via slug + contexte offre (si slug faible).
     const slugDerivedName = nameFromLinkedInSlug(contact.linkedinUrl);
     const rawLooksBad = looksLikeJobTitleNotName(rawFullName, jobTitle);
 
@@ -112,33 +111,24 @@ export const POST: RequestHandler = async ({ locals, params }) => {
     const existingLooksBad = looksLikeJobTitleNotName(contact.fullName, jobTitle);
 
     // Build AI summary
-    const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-
     const experiences = extractExperiences(profile);
     const skills = extractSkills(profile);
     const headline = (profile.headline as string) || "";
 
-    const summaryPrompt = `Tu es un assistant de recrutement. Analyse ce profil LinkedIn et rédige un résumé de 2-3 phrases concises en français, en mettant en avant :
-1. Le titre/rôle actuel et l'entreprise actuelle
-2. L'expertise principale et les compétences clés
-3. Le parcours pertinent
-
-Données du profil :
+    const linkedinSummary = await chatComplete({
+      model: CLAUDE_FAST_MODEL,
+      maxTokens: 200,
+      temperature: 0.7,
+      systemPrompt:
+        "Tu es un assistant de recrutement. Rédige un résumé concis en français (2-3 phrases). Réponds uniquement avec le résumé.",
+      userPrompt: `Analyse ce profil LinkedIn :
 Nom : ${fullName}
 Titre : ${headline}
-Expériences récentes : ${experiences.slice(0, 3).map(e => `${e.title} chez ${e.company} (${e.duration || ""})`).join(", ")}
+Expériences récentes : ${experiences.slice(0, 3).map((e) => `${e.title} chez ${e.company} (${e.duration || ""})`).join(", ")}
 Compétences : ${skills.slice(0, 8).join(", ")}
 
-Réponds uniquement avec le résumé, sans introduction ni conclusion.`;
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: summaryPrompt }],
-      max_tokens: 200,
-      temperature: 0.7,
-    });
-
-    const linkedinSummary = completion.choices[0]?.message?.content?.trim() || null;
+Mets en avant : rôle actuel, expertise clé, parcours pertinent.`,
+    }) || null;
 
     // Update the contact in DB.
     // - If Unipile gave us something usable, take it.

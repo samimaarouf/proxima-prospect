@@ -801,6 +801,7 @@ export class UnipileService {
       company?: string[];
       location?: string[];
       limit?: number;
+      cursor?: string;
     },
   ): Promise<UnipileLinkedInSearchResponse> {
     const body: Record<string, unknown> = {
@@ -814,6 +815,7 @@ export class UnipileService {
     const query = new URLSearchParams({ account_id: accountId });
     // LinkedIn Classic caps at 50 per-page according to Unipile docs.
     if (params.limit) query.set("limit", String(Math.min(params.limit, 50)));
+    if (params.cursor) query.set("cursor", params.cursor);
 
     return this.request<UnipileLinkedInSearchResponse>(
       `/linkedin/search?${query.toString()}`,
@@ -824,6 +826,41 @@ export class UnipileService {
       },
     );
   }
+
+  /**
+   * List recent LinkedIn posts published by a user or company.
+   * `identifier` must be the provider_id (ACo… for users).
+   */
+  async listLinkedInUserPosts(
+    accountId: string,
+    identifier: string,
+    params?: { limit?: number; isCompany?: boolean },
+  ): Promise<UnipileLinkedInPostListResponse> {
+    const query = new URLSearchParams({ account_id: accountId });
+    if (params?.limit) query.set("limit", String(Math.min(params.limit, 100)));
+    if (params?.isCompany) query.set("is_company", "true");
+
+    return this.request<UnipileLinkedInPostListResponse>(
+      `/users/${encodeURIComponent(identifier)}/posts?${query.toString()}`,
+    );
+  }
+}
+
+export interface UnipileLinkedInPost {
+  id?: string;
+  social_id?: string;
+  text?: string | null;
+  parsed_datetime?: string | null;
+  is_repost?: boolean;
+  reaction_counter?: number;
+  comment_counter?: number;
+}
+
+export interface UnipileLinkedInPostListResponse {
+  object?: string;
+  items: UnipileLinkedInPost[];
+  cursor?: string | null;
+  paging?: { page_count?: number; total_count?: number };
 }
 
 export interface UnipileLinkedInPersonCurrentPosition {
